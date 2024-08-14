@@ -1,0 +1,10 @@
+# Emacs backup files
+*~
+
+# Stack generated / temp files
+.stack-work/
+parse-pcre2.cabal
+
+# GHC generated files
+*.hi
+*.o

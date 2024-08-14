@@ -1,0 +1,35 @@
+pcre2test --version
+PCRE2 version 10.45-DEV 2024-06-09
+pcre2test -LP
+-------------------------- SUPPORTED PROPERTIES --------------------------
+
+This release of PCRE2 supports Unicode's general category properties such
+as Lu (upper case letter), bi-directional properties such as Bidi_Class,
+and the following binary (yes/no) properties:
+
+asciihexdigit (ahex)                    hexdigit (hex)
+alphabetic (alpha)                      idcontinue (idc)
+ascii                                   ideographic (ideo)
+bidicontrol (bidic)                     idstart (ids)
+bidimirrored (bidim)                    idsbinaryoperator (idsb)
+cased                                   idstrinaryoperator (idst)
+caseignorable (ci)                      joincontrol (joinc)
+changeswhencasefolded (cwcf)            logicalorderexception (loe)
+changeswhencasemapped (cwcm)            lowercase (lower)
+changeswhenlowercased (cwl)             math
+changeswhentitlecased (cwt)             noncharactercodepoint (nchar)
+changeswhenuppercased (cwu)             patternsyntax (patsyn)
+dash                                    patternwhitespace (patws)
+defaultignorablecodepoint (di)          prependedconcatenationmark (pcm)
+deprecated (dep)                        quotationmark (qmark)
+diacritic (dia)                         radical
+emojimodifierbase (ebase)               regionalindicator (ri)
+emojicomponent (ecomp)                  softdotted (sd)
+emojimodifier (emod)                    sentenceterminal (sterm)
+emoji                                   whitespace (space, wspace)
+emojipresentation (epres)               terminalpunctuation (term)
+extender (ext)                          unifiedideograph (uideo)
+extendedpictographic (extpict)          uppercase (upper)
+graphemebase (grbase)                   variationselector (vs)
+graphemeextend (grext)                  xidcontinue (xidc)
+graphemelink (grlink)                   xidstart (xids)

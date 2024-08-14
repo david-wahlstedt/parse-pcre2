@@ -1,0 +1,9 @@
+\p{sc:armi}
+\p{sc=armi}
+\p{script:armi}
+\p{script=armi}
+\p{Script_Extensions:armi}
+\p{Script_Extensions=armi}
+\p{scx:armi}
+\p{scx=armi}
+\p{armi}

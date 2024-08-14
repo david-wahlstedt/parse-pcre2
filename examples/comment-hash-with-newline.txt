@@ -1,0 +1,10 @@
+^(?<hgroup>(?<hex>[[:xdigit:]]{0,4}) # grab a sequence of up to 4 hex digits
+                                     # and name this pattern for usage later
+     (?<!:::):{1,2})                 # match 1 or 2 ':' characters
+                                     # as long as we can't match 3
+ (?&hgroup){1,6} # match our hex group 1 to 6 more times
+ (?:(?:
+    # match an ipv4 address or
+    (?<dgroup>2[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3}(?&dgroup)
+    # match our hex group one last time
+    |(?&hex))$
