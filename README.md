@@ -34,7 +34,7 @@ replace corresponding files' contents with the new outputs.
 ## Usage
 
 There is a main program that can be called from the command-line, for
-testing presupposes, that expects standard input. If the input has
+testing purposes, that expects standard input. If the input has
 several lines, these are considered as part of the pattern to parse.
 
 Examples:
@@ -109,17 +109,18 @@ working parser, and that seems to be the case!
 
 - **Abstract syntax**: The current abstract syntax is somewhat a
   middle ground between two extremes: 1) retaining all information
-  necessary to reconstruct the input string exactly, and 2) keeping
-  the minimal amount of information necessary to match the same set of
-  strings the PCRE2 expression matches. The reason for this is a bit
-  arbitrary: it is the first that came into mind. We would like the
-  constructors to be self documenting, but also not too long. Some of
-  the constructors are just copies of the corresponding PCRE2
-  counterparts, like Unicode script names, where others try to convey
-  what they do, like `Many` for `*`, `Many1` for `+`, and `RepMin Int`
-  for the `{,N}` quantifier. Some of the constructors could perhaps be
-  better as records, for instance for character class or lookaround,
-  that have different properties such as being positive/negative,
+  necessary to reconstruct the input PCRE2 pattern exactly as it was
+  given, and 2) keeping the minimal amount of information necessary to
+  match the same set of strings as the given PCRE2 expression
+  matches. The reason for this is a bit arbitrary: it is the first
+  that came into mind. We would like the constructors to be self
+  documenting, but also not too long. Some of the constructors are
+  just copies of the corresponding PCRE2 counterparts, like Unicode
+  script names, where others try to convey what they do, like `Many`
+  for `*`, `Many1` for `+`, and `RepMin Int` for the `{,N}`
+  quantifier. Some of the constructors could perhaps be better as
+  records, for instance for character class or lookaround, that have
+  different properties such as being positive/negative,
   forward/behind, etc.
 
 - **Higher level functional programming**: Not so much. But when we
