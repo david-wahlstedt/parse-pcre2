@@ -1,3 +1,14 @@
+{- |
+
+This code is called from Makefile, to generate data types and parser
+helper structures for \p{ ... } Unicode properties, based on the
+output of
+
+1) pcre2test -LP (for "binary properties") and
+2) pcre2test -LS (for unicode script names)
+
+-}
+
 {-# OPTIONS_GHC -Wno-missing-signatures #-}
 {-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
 {-# OPTIONS_GHC -Wno-incomplete-patterns #-}
@@ -16,6 +27,8 @@ scriptNameFileName     = "pcre2test/pcre2test-LS.txt"
 binaryPropertyName = "BinProp"
 scriptNameName = "ScriptName"
 
+generatedCodePrefix = "generated"
+
 warningsToSkip
   = unlines ["{-# OPTIONS_GHC -Wno-" ++ w ++ " #-}"
             | w <- ["missing-export-lists", "missing-signatures"]]
@@ -24,79 +37,70 @@ warningsToSkip
 --                          Main function
 
 main = do
-  -- Binary properties datatype
-  propNameFile <- readFile binaryPropertyFileName
-  let propNamesShorts = getNamesAndShorts $ getBody propNameFile
-      propData = genDataFromNames binaryPropertyName $ map fst propNamesShorts
-      propModuleName = "Abs" ++ binaryPropertyName
-      propDataBody =
-        warningsToSkip ++ "\n" ++
-        "module " ++ propModuleName ++ " where\n\n" ++
-        propData
-  writeFile ("generated/"++ propModuleName ++".hs") propDataBody
-  -- Binary properties parser helpers
-  let propParserHelpers = genParserHelpers binaryPropertyName propNamesShorts
-      propParsModuleName = "ParsHelp" ++ binaryPropertyName
-      propParsHelpBody =
-        warningsToSkip ++ "\n" ++
-        "module " ++ propParsModuleName ++ " where\n\n" ++
-        "import " ++ propModuleName ++ "\n\n" ++
-        propParserHelpers
-  writeFile ("generated/"++ propParsModuleName ++".hs") propParsHelpBody
+  genCode binaryPropertyFileName binaryPropertyName
+  genCode scriptNameFileName scriptNameName
 
-  -- Script name datatype
-  scriptNameFile <- readFile scriptNameFileName
-  let scriptNamesShorts = getNamesAndShorts $ getBody scriptNameFile
-      scriptData = genDataFromNames scriptNameName $ map fst scriptNamesShorts
-      scriptModuleName = "Abs" ++ scriptNameName
-      scriptDataBody =
-        warningsToSkip ++ "\n" ++
-        "module " ++ scriptModuleName ++ " where\n\n" ++
-        scriptData
-  writeFile ("generated/"++ scriptModuleName ++".hs") scriptDataBody
-  -- Script name parser helpers
-  let scriptParserHelpers = genParserHelpers scriptNameName scriptNamesShorts
-      scriptParsModuleName = "ParsHelp" ++ scriptNameName
-      scriptParsHelpBody =
-        warningsToSkip ++ "\n" ++
-        "module " ++ scriptParsModuleName ++ " where\n\n" ++
-        "import " ++ scriptModuleName ++ "\n\n" ++
-        scriptParserHelpers
-  writeFile ("generated/"++ scriptParsModuleName ++".hs") scriptParsHelpBody
+genCode fileName name = do
+  contents <- readFile fileName
+  let namesShorts = getNamesAndShorts $ getBody contents
+      dataDefs = genDataDef name $ map fst namesShorts
+      dataModuleName = "Abs" ++ name
+  -- write data type declarations to be imported by AbsPCRE and ParsePCRE
+  writeFile (mkHsFilePath dataModuleName) $
+    genModule dataModuleName [] dataDefs
 
+  let parserHelper = genParserHelper name namesShorts
+      parsModuleName = "ParsHelp" ++ name
+  -- write parser helper code to be imported by ParsePCRE
+  writeFile (mkHsFilePath parsModuleName) $
+    genModule parsModuleName [dataModuleName] parserHelper
+  where
+    mkHsFilePath moduleName = generatedCodePrefix ++ "/" ++ moduleName ++ ".hs"
+
+
+--                         Generate module
+
+genModule :: String -> [String] -> String -> String
+genModule moduleName importModules code
+  = warningsToSkip ++ "\n" ++
+    "module " ++ moduleName ++ " where\n\n" ++ imports ++ "\n" ++ code
+  where imports = unlines $ map ("import "++) importModules
 
 --                  Generate data type definition
 
-genDataFromNames typeName names
-  = genData typeName constructorNames
-  where
-    constructorNames = map capitalize names
-
-genData typeName constructorNames
+genDataDef :: String -> [String] -> String
+genDataDef typeName names
   = "data " ++ typeName ++ "\n" ++
     indentation ++ "= " ++
     intercalate ("\n" ++ indentation ++ "| ") constructorNames ++ "\n" ++
     indentation ++ "deriving Show" ++ "\n"
+  where
+    constructorNames = map capitalize names
 
 
---                     Generate parser helpers
+--                 Generate parser helper structure
 
-genParserHelpers typeName namesShorts = let
-  pairs = ["([\"" ++ intercalate "\", \"" (name : shorts) ++ "\"], " ++
-           capitalize name ++ ")"
-          | (name, shorts) <- namesShorts
-          ]
-  in "namesAndCons" ++ typeName ++ " = [\n" ++ indentation ++
-     intercalate (",\n"++indentation) pairs ++ "]"
+genParserHelper :: String -> [(String, [String])] -> String
+genParserHelper typeName namesShorts
+  = let pairs = ["([\"" ++ intercalate "\", \"" (name : shorts) ++ "\"], " ++
+                 capitalize name ++ ")"
+                | (name, shorts) <- namesShorts
+                ]
+    in "namesAndCons" ++ typeName ++ " = [\n" ++ indentation ++
+       intercalate (",\n" ++ indentation) pairs ++ "]"
 
 
 --      Collect names and shortcuts from pcre2test -LP or -LS
 
+-- The body of the output appears after the last blank line
+getBody :: String -> String
 getBody fileData
   = let ls = lines fileData
         (as, _) = break null $ dropWhile null $ reverse ls
     in unlines $ reverse as
 
+-- Collect names and/or shortcuts and sort alphabetically
+getNamesAndShorts :: String -> [(String, [String])]
 getNamesAndShorts = sort . getNamesAndShorts'
   where
     getNamesAndShorts' body
@@ -104,6 +108,9 @@ getNamesAndShorts = sort . getNamesAndShorts'
           Just (nameShort, body') -> nameShort : getNamesAndShorts' body'
           Nothing -> []
 
+-- Gets the next name from the input string, and if present within
+-- parentheses, a comma-separated list of its shortcuts.
+nextNameShort :: String -> Maybe ((String, [String]), String)
 nextNameShort body
   = case span isAlphaNum $ stripSpace body of
       (name@(_ : _), ' ' : '(' : body1) ->
@@ -117,13 +124,18 @@ nextNameShort body
 
 --                           Misc helpers
 
+capitalize :: String -> String
 capitalize (c : cs) = toUpper c : cs
 
+stripSpace :: String -> String
 stripSpace = unwords . words
 
+removeSpace :: String -> String
 removeSpace = filter (not . isSpace)
 
+splitBy :: Eq a => a -> [a] -> [[a]]
 splitBy delim s = filter (/=[delim]) $ groupOn (==delim) s
 
+groupOn :: Eq b => (a -> b) -> [a] -> [[a]]
 groupOn f = groupBy ((==) `on` f)
 
