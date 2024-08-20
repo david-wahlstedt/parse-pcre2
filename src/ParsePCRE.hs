@@ -161,7 +161,7 @@ ctGeneral
   <++ (Number      N <$ caseLessChar 'N')
   <++ (Punctuation P <$ caseLessChar 'P')
   <++ (Symbol      S <$ caseLessChar 'S')
-  <++ (Separator   Z <$ caseLessChar 'X')
+  <++ (Separator   Z <$ caseLessChar 'Z')
 
 ctBody
   =   (CTUAny <$ loose "Any")
