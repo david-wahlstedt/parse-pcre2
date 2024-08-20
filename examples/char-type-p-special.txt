@@ -1,0 +1,5 @@
+\p{Xan}
+\p{Xps}
+\p{Xsp}
+\p{Xuc}
+\p{Xwd}
