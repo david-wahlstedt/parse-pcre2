@@ -28,6 +28,7 @@ import ParsHelpScriptName
 ------------------------------------------------------------------------------
 --                        Parser entrypoint
 
+parsePCRE :: String -> Maybe Re
 parsePCRE input = case readP_to_S (re <* eof) input of
     (result, "") : _ -> Just result
     _                -> Nothing
@@ -44,6 +45,7 @@ alt = Alt <$> sepBy sequencing (char '|')
 sequencing :: ReadP Re
 sequencing = Seq <$> (option "" comment *> many atom)
 
+atom :: ReadP Re
 atom = atom' <* option "" comment
 
 atom' :: ReadP Re
@@ -122,10 +124,12 @@ escChar
 
 --                         Character types
 
+charType :: ReadP Chartype
 charType
   =   charTypeCommon
   <++ (CTAny <$ char '.')
 
+charTypeCommon :: ReadP Chartype
 charTypeCommon
   =   (CTCodeUnit   <$ string "\\C")
   <++ (CTDigit      <$ string "\\d")
@@ -355,16 +359,20 @@ charClassBody
        (optEmptyQuoting <* char ']' *> many charClassItem))
   <++ many charClassItem
 
+charClassRange :: ReadP CharclassItem
 charClassRange
   = Range <$>
     charClassAtom <*> ((optEmptyQuoting <* char '-') *> charClassAtom)
 
+charClassItem :: ReadP CharclassItem
 charClassItem
   =   charClassRange
   <++ (CCAtom <$> charClassAtom)
 
+charClassAtom :: ReadP CharclassAtom
 charClassAtom = optEmptyQuoting *> charClassAtom'
 
+charClassAtom' :: ReadP CharclassAtom
 charClassAtom'
   =   (CCQuoting   <$> postCheck (not . null) quoting)
   <++ (CCBackspace <$  string "\\b")
@@ -373,10 +381,12 @@ charClassAtom'
   <++ (PosixSet    <$> posixSet)
   <++ (CCLit       <$> ccLit)
 
+posixSet :: ReadP PosixSet
 posixSet
   =   (NegSet <$> (string "[:^" *> setName <* string ":]"))
   <++ (PosSet <$> (string "[:"  *> setName <* string ":]"))
 
+setName :: ReadP SetName
 setName
   =   (SetAlnum  <$ string "alnum" ) -- alphanumeric
   <++ (SetAlpha  <$ string "alpha" ) -- alphabetic
@@ -403,8 +413,10 @@ ccSpecials = ['\\', ']']
 
 --                           Quantifiers
 
+quantifier :: ReadP Quantifier
 quantifier = option "" comment *> quantifier'
 
+quantifier' :: ReadP Quantifier
 quantifier'
   =   (Option <$ char '?')
   <++ (Many   <$ char '*')
@@ -423,8 +435,10 @@ quantifier'
        (char '{' *> skipSpaces *> natural <* skipSpaces <* char ',') <*>
         (skipSpaces *> natural <* skipSpaces <* char '}'))
 
+quantMode :: ReadP QuantifierMode
 quantMode = option "" comment *> quantMode'
 
+quantMode' :: ReadP QuantifierMode
 quantMode'
   =   (Possessive <$ char '+')
   <++ (Lazy <$ char '?')
@@ -432,6 +446,7 @@ quantMode'
 
 --                         Anchors
 
+anchor :: ReadP Anchor
 anchor
   =   (StartOfLine          <$ char   '^')
   <++ (EndOfLine            <$ char   '$')
@@ -447,6 +462,7 @@ anchor
 
 --                         Groups
 
+group :: ReadP Re
 group
   =   atomicNonCapture
   <++ nonCapture
@@ -455,8 +471,10 @@ group
   <++ nonCaptureReset
   <++ capture
 
+capture :: ReadP Re
 capture = Group Capture <$> (char '(' *> alt <* char ')')
 
+nonCapture :: ReadP Re
 nonCapture = Group NonCapture <$>  (string "(?:" *> alt <* char ')')
 
 -- option setting in non-capture group (?OptsOn-OptsOff:...)
@@ -468,13 +486,16 @@ nonCaptureOpts
     mkGroup :: ([InternalOpt], [InternalOpt]) -> Re -> Re
     mkGroup (ons, offs) = Group (NonCaptureOpts ons offs)
 
+nonCaptureReset :: ReadP Re
 nonCaptureReset
   = Group NonCaptureReset <$> (string "(?|" *> alt <* char ')')
 
+atomicNonCapture :: ReadP Re
 atomicNonCapture
   = Group AtomicNonCapture <$>
     (string "(?>" <++ string "(*atomic:" *> alt <* char ')')
 
+namedCapture :: ReadP Re
 namedCapture
   =   (mkNamed <$>
        (string "(?<" *> groupName) <*> (char '>' *> alt <* char ')'))
@@ -489,19 +510,23 @@ groupName = (:) <$> groupNameChar True <*> many (groupNameChar False)
 
 --                             Comments
 
+comment :: ReadP String
 comment
   =   (string "(?#" *> getUntil ")")
   <++ emptyQuoting
 
+emptyQuoting :: ReadP String
 emptyQuoting
   =   string "\\Q\\E" -- Ignore empty quotings
   <++ string "\\E"    -- An isolated \E that is not preceded by \Q is ignored.
 
--- strips away zero or more consecutive empty quotings
+-- Strips away zero or more consecutive empty quotings
+optEmptyQuoting :: ReadP String
 optEmptyQuoting = "" <$ many emptyQuoting
 
 --                          Option setting
 
+optionSetting :: ReadP OptionSetting
 optionSetting
   =   (StartOpt <$> (string "(*" *> startOpt <* char ')'))
   <++ (uncurry InternalOpts <$> (string "(?" *> optionsOnOff <* char ')'))
@@ -511,6 +536,7 @@ optionsOnOff
   =   ((,) <$> (many internalOpt <* char '-') <*> many internalOpt)
   <++ ((\opts -> (opts, [])) <$> many internalOpt)
 
+startOpt :: ReadP StartOpt
 startOpt
   =   (LimitDepth <$> (string "LIMIT_DEPTH="     *> natural))
   <++ (LimitDepth <$> (string "LIMIT_RECURSION=" *> natural))
@@ -538,6 +564,7 @@ startOpt
   <++ (BsrAnycrlf <$ string "BSR_ANYCRLF")
   <++ (BsrUnicode <$ string "BSR_UNICODE")
 
+internalOpt :: ReadP InternalOpt
 internalOpt
   =   (CaseLess           <$ string  "i")
   <++ (AllowDupGrp        <$ string  "J")
@@ -559,6 +586,7 @@ internalOpt
 
 --                            Lookaround
 
+lookAround :: ReadP Re
 lookAround
   =   (Look Ahead Pos <$>
        (string "(?=" <++ string "(*pla:" <++ string "(*positive_lookahead:"
@@ -584,11 +612,13 @@ lookAround
 
 --               Backreferences and subroutine calls
 
+backRef :: ReadP Ref
 backRef
   =   (ByName   <$> refByName  )
   <++ (Relative <$> refRelative)
   <++ (ByNumber <$> refByNumber)
 
+refByName :: ReadP String
 refByName
   =   (string "(?P=" *> groupName <* char  ')')
   <++ (string "\\k{" *> groupName <* char  '}')
@@ -596,18 +626,21 @@ refByName
   <++ (string "\\k'" *> groupName <* char '\'')
   <++ (string "\\k<" *> groupName <* char  '>')
 
+refRelative :: ReadP Int
 refRelative
   =   (string "\\g{+" *> positive <* char '}')
   <++ (negate <$> (string "\\g{-" *> positive <* char '}'))
   <++ (string "\\g+" *> positive)
   <++ (negate <$> (string "\\g-"  *> positive))
 
+refByNumber :: ReadP Int
 refByNumber
   =   (string  "\\g{" *> positive <* char '}')
   <++ (string  "\\g"  *> positive)
   -- \ digit is handled by EOctOrBackRef
 
 -- subroutine references (possibly recursive)
+subRef :: ReadP SubRef
 subRef
   =   (Recurse <$ string "(?R)" )
   <++ (CallAbs <$>
@@ -649,6 +682,7 @@ conditional
   <++ (CondYes <$>
        (string "(?(" *> condition <* char ')') <*> (sequencing <* char ')'))
 
+condition :: ReadP Condition
 condition
   =   (AbsRef <$> positive)
   <++ (RelRef <$> (char '+' *> positive))
@@ -693,6 +727,7 @@ condition
 --  (*atomic_script_run:...)    ) atomic script run
 --  (*asr:...)                  )
 
+scriptRun :: ReadP Re
 scriptRun
   =   (ScriptRun NonAtomic <$>
        (string "(*script_run:" <++ string "(*sr:" *> alt) <* char ')')
@@ -702,6 +737,7 @@ scriptRun
 
 --                       Backtracking control
 
+backtrackControl :: ReadP BacktrackControl
 backtrackControl
   =   (Accept <$> (string "(*ACCEPT" *> optName <* char ')'))
   <++ (Fail   <$> ((string "(*FAIL" +++ string "(*F") *> optName <* char ')'))
@@ -718,15 +754,18 @@ backtrackControl
 
 --                             Callouts
 
+callout :: ReadP Callout
 callout
   = string "(?" *> calloutBody <* string ")"
 
+calloutBody :: ReadP Callout
 calloutBody
   =   (CalloutN <$> (string "C" *> natural)) -- (?Cn) with numerical data n
   <++ (CalloutS <$> (string "C" *> coutStr)) -- (?C"text") with string data
   <++ (Callout  <$  string "C")              -- (?C) (assumed number 0)
 
 -- delimiters: ` ' " ^ % # $ and { }
+coutStr :: ReadP String
 coutStr
   =   coutStr_ "`"   "`"
   <++ coutStr_ "'"   "'"
@@ -738,6 +777,7 @@ coutStr
 
 -- The close delimiter is escaped by doubling it,
 -- e.g. (?C{te{x}}t}) to escape the '}'.
+coutStr_ :: String -> String -> ReadP String
 coutStr_ open close
   = (\ss s -> concatMap (++ close) ss ++ s) <$>
     (string open *> many (getUntil closeTwice))
@@ -750,19 +790,24 @@ coutStr_ open close
 literal :: ReadP Re
 literal = Lit <$> nonSpecial topLevelSpecials
 
+nonSpecial :: Foldable t => t Char -> ReadP Char
 nonSpecial specials = satisfy (not . flip elem specials)
 
 -- Needs to be escaped on top level (outside character classes):
+topLevelSpecials :: [Char]
 topLevelSpecials = ['^', '\\', '|', '(', ')', '[', '$', '+', '*', '?', '.']
 
 
 ------------------------------------------------------------------------------
 -- Parser helpers
 
+nonCtrl :: ReadP Char
 nonCtrl = satisfy (not . isControl)
 
+nonAlphanumAscii :: ReadP Char
 nonAlphanumAscii = satisfy (\c -> not (isAlphaNum c && isAscii c))
 
+groupNameChar :: Bool -> ReadP Char
 groupNameChar isFirst
   = satisfy (\c -> not isFirst && isDigit c || isLetter c || c == '_')
 
@@ -824,6 +869,7 @@ postCheck isOk p = do
     else pfail
 
 -- For "loose matching" in character type property names
+loosely :: String -> String
 loosely
   = map toLower . filter (\c -> not (isSpace c && isAscii c || c `elem` ['-','_']))
 
@@ -839,6 +885,7 @@ flatNamesAndCons namesAndCons = concat
    | nameOrAbbrev <- nameOrAbbrevs]
   | (nameOrAbbrevs, constructor) <- namesAndCons]
 
+charclassCase :: ([CharclassItem] -> a) -> ([CharclassItem] -> a) -> Charclass -> a
 charclassCase fOneof fNoneof charclass =
   case charclass of
     Oneof  items -> fOneof  items
