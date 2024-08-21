@@ -67,31 +67,6 @@ Some examples should fail, but most of them should succeed.
   examples in the aforementioned `examples` directory successfully,
   and more.
 
-- **Performance**: Some parts of the parser are very inefficient, due
-  to naive approaches. In particular, character types involving
-  Unicode script names, like `\p{armi}`, etc. These are implemented
-  with "loose matching", which means that a string is matched with the
-  input after mapping to lowercase and removing whitespace, hyphens
-  and underscore. It also involves linear search in a big table of
-  possible script names. For instance, the following example (all the
-  Unicode script names in one file) takes a long time to parse if
-  taken as one big sequence, including the newlines::
-
-  ```
-  wc examples/char-type-all-scripts.txt
-  322  322 3583 examples/char-type-all-scripts.txt
-
-  time parse-pcre2 < examples/char-type-all-scripts.txt
-  real	0m21,344s
-  ```
-  whereas
-  ```
-  time while read -r line || [ -n "$line" ]; do printf "%s" "$line" | parse-pcre2; done < examples/char-type-all-scripts.txt
-  real	0m3,848s
-  ```
-  the same expressions are parsed much faster when separated into one command each.
-  This needs to be investigated further.
-
 ## Some remarks on the code:
 
 There is certainly room for improvement in the code, from a functional
