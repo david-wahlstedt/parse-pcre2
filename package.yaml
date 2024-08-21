@@ -21,6 +21,7 @@ description:         Please see the README on GitHub at <https://github.com/davi
 
 dependencies:
 - base >= 4.7 && < 5
+- unordered-containers
 - pretty-show
 
 ghc-options:
@@ -33,6 +34,7 @@ ghc-options:
 - -Wmissing-home-modules
 - -Wpartial-fields
 - -Wredundant-constraints
+- -XLambdaCase
 
 library:
   source-dirs:

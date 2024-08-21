@@ -10,10 +10,10 @@
 
 module ParsePCRE where
 
-import Data.Char(isAlpha, isDigit, isAlphaNum, isLetter,
+import qualified Data.Bifunctor
+import Data.Char(isDigit, isAlphaNum, isLetter,
                  isAscii, isControl, isHexDigit, isSpace, toLower)
-import Data.Function(on)
-import Data.List (inits, isPrefixOf, sortOn)
+import qualified Data.HashMap.Strict as HM
 import Text.ParserCombinators.ReadP
 
 import AbsPCRE
@@ -23,8 +23,6 @@ import AbsBinProp
 import ParsHelpBinProp
 import AbsScriptName
 import ParsHelpScriptName
-import qualified Control.Monad
-import qualified Data.Ord
 
 
 ------------------------------------------------------------------------------
@@ -145,138 +143,155 @@ charTypeCommon
   <++ (CTUCluster   <$ string "\\X")
   <++ ctProperty
 
+-- \p and \P character type properties
+ctProperty :: ReadP Chartype
 ctProperty
-  =   (CTProp  <$> ((string "\\P{^" <++ string "\\p{") *> ctBody <* char '}'))
-  <++ (CTNProp <$> ((string "\\p{^" <++ string "\\P{") *> ctBody <* char '}'))
-  <++ (CTProp  . CTGenProp <$> (string "\\p" *> ctGeneral))
-  <++ (CTNProp . CTGenProp <$> (string "\\P" *> ctGeneral))
+  =   (CTProp  <$> ((string "\\P{^" <++ string "\\p{") *> ctBody))
+  <++ (CTNProp <$> ((string "\\p{^" <++ string "\\P{") *> ctBody))
+  <++ (CTProp  <$> (string "\\p" *> singleCharGeneral))
+  <++ (CTNProp <$> (string "\\P" *> singleCharGeneral))
+
+-- Single character properties C, L, N, M, P, S, and Z.
+singleCharGeneral :: ReadP CTProperty
+singleCharGeneral = do
+  c <- get
+  miscProp [toLower c]
 
 -- Everything inside \p{ } or \P{ } is converted into lower case and
 -- stripped from ascii range spaces, hyphens and underscores.
 
-ctGeneral
-  =   (Other       C <$ caseLessChar 'C')
-  <++ (Letter      L <$ caseLessChar 'L')
-  <++ (Mark        M <$ caseLessChar 'M')
-  <++ (Number      N <$ caseLessChar 'N')
-  <++ (Punctuation P <$ caseLessChar 'P')
-  <++ (Symbol      S <$ caseLessChar 'S')
-  <++ (Separator   Z <$ caseLessChar 'Z')
+ctBody :: ReadP CTProperty
+ctBody = do
+  body <- getUntil "}"
+  case break (`elem` [':','=']) $ loosely body of
+    -- Bidi classes
+    (prefix, _: subject) | prefix `elem` ["bc", "bidiclass"] ->
+      CTBidi <$> bidi subject
+    -- Script matching, extensions
+    (prefix, _: subject) | prefix `elem` ["scx", "scriptextensions"] ->
+      CTScript . Extensions <$> scriptName subject
+    -- Script matching, basic
+    (prefix, _: subject) | prefix `elem` ["sc", "script"] ->
+      CTScript . Basic <$> scriptName subject
+    (subject, []) ->
+      -- pcre2pattern: If a script name is given without a property type,
+      -- for example, \p{Adlam}, it is treated as \p{scx:Adlam}:
+      (CTScript . Extensions <$> scriptName subject)
+      <++
+      -- "binary properties"
+      (CTBinProp <$> binProp subject)
+      <++
+      -- All other \p and \P properties
+      -- All other \p and \P properties
+      miscProp subject
+    _ ->
+      pfail
 
-ctBody
-  =   (CTUAny <$ loose "Any")
-  -- pcre2pattern: If a script name is given without a property type,
-  -- for example, \p{Adlam}, it is treated as \p{scx:Adlam}:
-  <++ (CTScript . Extensions   <$>    ctScriptName)
-  <++ (CTScript                <$>    ctScriptMatching)
-  <++ (CTBidi <$> ((loose "Bidi_Class" <++ loose "BC") *>
-                   satisfy (`elem` [':','=']) *> ctBidiClass))
-  <++ (CTBinProp               <$>    ctBinProp)
-  <++ (CTGenProp . Other       <$>    ctOther)
-  <++ (CTGenProp . Letter      <$>    ctLetter)
-  <++ (CTGenProp . Mark        <$>    ctMark)
-  <++ (CTGenProp . Number      <$>    ctNumber)
-  <++ (CTGenProp . Punctuation <$>    ctPunctuation)
-  <++ (CTGenProp . Symbol      <$>    ctSymbol)
-  <++ (CTGenProp . Separator   <$>    ctSeparator)
-  <++ (CTSpecProp              <$>    ctSPecProp)
+-- "General category properties for \p and \P" and
+-- "PCRE2 special category properties for \p and \P"
+miscProp :: String -> ReadP CTProperty
+miscProp s = maybe pfail pure $ HM.lookup s miscProps
 
-ctOther
-  =   (Cc <$ loose "Cc") -- Control
-  <++ (Cf <$ loose "Cf") -- Format
-  <++ (Cn <$ loose "Cn") -- Unassigned
-  <++ (Co <$ loose "Co") -- Private use
-  <++ (Cs <$ loose "Cs") -- Surrogate
-  <++ (C  <$ loose "C" ) -- Other
+-- namesAndConsScriptName is gnerated from ../pcre2test/pcre2test-LS.txt
+scriptName :: String -> ReadP ScriptName
+scriptName s = maybe pfail pure $ HM.lookup s scriptNames
+scriptNames :: HM.HashMap String ScriptName
+scriptNames = HM.fromList $ flatNamesAndCons namesAndConsScriptName
 
-ctLetter
-  =   (Ll   <$ loose "Ll") -- Lower case letter
-  <++ (Lm   <$ loose "Lm") -- Modifier letter
-  <++ (Lo   <$ loose "Lo") -- Other letter
-  <++ (Lt   <$ loose "Lt") -- Title case letter
-  <++ (Lu   <$ loose "Lu") -- Upper case letter
-  <++ (Lc   <$ loose "Lc") -- Ll, Lu, or Lt
-  <++ (Llut <$ loose "L&") -- "L&": Ll, Lu, or Lt
-  <++ (L    <$ loose "L" ) -- Letter
+-- namesAndConsBinProp is generated from ../pcre2test/pcre2test-LP.txt
+binProp :: String -> ReadP BinProp
+binProp s = maybe pfail pure $ HM.lookup s binProps
+binProps :: HM.HashMap String BinProp
+binProps = HM.fromList $ flatNamesAndCons namesAndConsBinProp
 
-ctMark
-  =   (Mc <$ loose "Mc") -- Spacing mark
-  <++ (Me <$ loose "Me") -- Enclosing mark
-  <++ (Mn <$ loose "Mn") -- Non-spacing mark
-  <++ (M  <$ loose "M" ) -- Mark
+bidi :: String -> ReadP CTBidiClass
+bidi s = maybe pfail pure $ lookup s bidiClasses
 
-ctNumber
-  =   (Nd <$ loose "Nd") -- Decimal number
-  <++ (Nl <$ loose "Nl") -- Letter number
-  <++ (No <$ loose "No") -- Other number
-  <++ (N  <$ loose "N" ) -- Number
+bidiClasses :: [(String, CTBidiClass)]
+bidiClasses =
+  [ ("al",  BidiAL)
+  , ("an",  BidiAN)
+  , ("b",   BidiB)
+  , ("bn",  BidiBN)
+  , ("cs",  BidiCS)
+  , ("en",  BidiEN)
+  , ("es",  BidiES)
+  , ("et",  BidiET)
+  , ("fsi", BidiFSI)
+  , ("l",   BidiL)
+  , ("lre", BidiLRE)
+  , ("lri", BidiLRI)
+  , ("lro", BidiLRO)
+  , ("nsm", BidiNSM)
+  , ("on",  BidiON)
+  , ("pdf", BidiPDF)
+  , ("pdi", BidiPDI)
+  , ("r",   BidiR)
+  , ("rle", BidiRLE)
+  , ("rli", BidiRLI)
+  , ("rlo", BidiRLO)
+  , ("s",   BidiS)
+  , ("ws",  BidiWS)
+  ]
 
-ctPunctuation
-  =   (Pc <$ loose "Pc") -- Connector punctuation
-  <++ (Pd <$ loose "Pd") -- Dash punctuation
-  <++ (Pe <$ loose "Pe") -- Close punctuation
-  <++ (Pf <$ loose "Pf") -- Final punctuation
-  <++ (Pi <$ loose "Pi") -- Initial punctuation
-  <++ (Po <$ loose "Po") -- Other punctuation
-  <++ (Ps <$ loose "Ps") -- Open punctuation
-  <++ (P  <$ loose "P" ) -- Punctuation
-
-ctSymbol
-  =   (Sc <$ loose "Sc") -- Currency symbol
-  <++ (Sk <$ loose "Sk") -- Modifier symbol
-  <++ (Sm <$ loose "Sm") -- Mathematical symbol
-  <++ (So <$ loose "So") -- Other symbol
-  <++ (S  <$ loose "S" ) -- Symbol
-
-ctSeparator
-  =   (Zl <$ loose "Zl") -- Line separator
-  <++ (Zp <$ loose "Zp") -- Paragraph separator
-  <++ (Zs <$ loose "Zs") -- Space separator
-  <++ (Z  <$ loose "Z" ) -- Separator
-
-ctSPecProp
-  =   (Xan <$ loose "Xan") -- Alphanumeric: union of properties L and N
-  <++ (Xps <$ loose "Xps") -- POSIX sp: property Z or tab, NL, VT, FF, CR
-  <++ (Xsp <$ loose "Xsp") -- Perl sp: property Z or tab, NL, VT, FF, CR
-  <++ (Xuc <$ loose "Xuc") -- Univ.-named character: one that can be ...
-  <++ (Xwd <$ loose "Xwd") -- Perl word: property Xan or underscore
-
--- See ../pcre2test/pcre2test-LP.txt
-ctBinProp = mkLooseChoiceParser namesAndConsBinProp
-
--- See ../pcre2test/pcre2test-LS.txt
-ctScriptName = mkLooseChoiceParser namesAndConsScriptName
-
-ctScriptMatching
-  =   (Basic <$> (loose "Script" <++ loose "sc" *>
-                   satisfy (`elem` [':','=']) *> ctScriptName))
-  <++ (Extensions <$> (loose "Script_Extensions" <++ loose "scx" *>
-                   satisfy (`elem` [':','=']) *> ctScriptName))
-
-ctBidiClass
-  =   (BidiWS  <$ loose "WS" ) -- which space
-  <++ (BidiS   <$ loose "S"  ) -- segment separator
-  <++ (BidiRLO <$ loose "RLO") -- right-to-left override
-  <++ (BidiRLI <$ loose "RLI") -- right-to-left isolate
-  <++ (BidiRLE <$ loose "RLE") -- right-to-left embedding
-  <++ (BidiR   <$ loose "R"  ) -- right-to-left
-  <++ (BidiPDI <$ loose "PDI") -- pop directional isolate
-  <++ (BidiPDF <$ loose "PDF") -- pop directional format
-  <++ (BidiON  <$ loose "ON" ) -- other neutral
-  <++ (BidiNSM <$ loose "NSM") -- non-spacing mark
-  <++ (BidiLRO <$ loose "LRO") -- left-to-right override
-  <++ (BidiLRI <$ loose "LRI") -- left-to-right isolate
-  <++ (BidiLRE <$ loose "LRE") -- left-to-right embedding
-  <++ (BidiL   <$ loose "L"  ) -- left-to-right
-  <++ (BidiFSI <$ loose "FSI") -- first strong isolate
-  <++ (BidiET  <$ loose "ET" ) -- European terminator
-  <++ (BidiES  <$ loose "ES" ) -- European separator
-  <++ (BidiEN  <$ loose "EN" ) -- European number
-  <++ (BidiCS  <$ loose "CS" ) -- common separator
-  <++ (BidiBN  <$ loose "BN" ) -- boundary neutral
-  <++ (BidiB   <$ loose "B"  ) -- paragraph separator
-  <++ (BidiAN  <$ loose "AN" ) -- Arabic number
-  <++ (BidiAL  <$ loose "AL" ) -- Arabic letter
+miscProps :: HM.HashMap String CTProperty
+miscProps = HM.fromList $ concat
+  [
+    [ ("any", CTUAny) ],
+    mapSnd (CTGenProp . Other)
+    [ ("c" , C   ),   -- Other
+      ("cc", Cc  ),   -- Control
+      ("cf", Cf  ),   -- Format
+      ("cn", Cn  ),   -- Unassigned
+      ("co", Co  ),   -- Private use
+      ("cs", Cs  ) ], -- , -- Surrogate
+    mapSnd (CTGenProp . Letter)
+    [ ("l",  L   ),   -- Letter
+      ("lc", Lc  ),   -- Ll, Lu, or Lt
+      ("l&", Llut),   -- "L&": Ll, Lu, or Lt
+      ("ll", Ll  ),   -- Lower case letter
+      ("lm", Lm  ),   -- Modifier letter
+      ("lo", Lo  ),   -- Other letter
+      ("lt", Lt  ),   -- Title case letter
+      ("lu", Lu  ) ],   -- Upper case letter
+    mapSnd (CTGenProp . Mark)
+    [ ("m",   M  ),   -- Mark
+      ("mc",  Mc ),   -- Spacing mark
+      ("me",  Me ),   -- Enclosing mark
+      ("mn",  Mn ) ], -- Non-spacing mark
+    mapSnd (CTGenProp . Number)
+    [ ("n",   N  ),   -- Number
+      ("nd",  Nd ),   -- Decimal number
+      ("nl",  Nl ),   -- Letter number
+      ("no",  No ) ], -- Other number
+    mapSnd (CTGenProp . Punctuation)
+    [ ("p",   P  ),   -- Punctuation
+      ("pc",  Pc ),   -- Connector punctuation
+      ("pd",  Pd ),   -- Dash punctuation
+      ("pe",  Pe ),   -- Close punctuation
+      ("pf",  Pf ),   -- Final punctuation
+      ("pi",  Pi ),   -- Initial punctuation
+      ("po",  Po ),   -- Other punctuation
+      ("ps",  Ps ) ], -- Open punctuation
+    mapSnd (CTGenProp . Symbol)
+    [ ("s",   S  ),   -- Symbol
+      ("sc",  Sc ),   -- Currency symbol
+      ("sk",  Sk ),   -- Modifier symbol
+      ("sm",  Sm ),   -- Mathematical symbol
+      ("so",  So ) ], -- Other symbol
+    mapSnd (CTGenProp . Separator)
+    [ ("z",   Z  ),   -- Separator
+      ("zl",  Zl ),   -- Line separator
+      ("zp",  Zp ),   -- Paragraph separator
+      ("zs",  Zs ) ], -- Space separator
+    mapSnd CTSpecProp
+    [ ("xan", Xan),  -- Alphanumeric: union of properties L and N
+      ("xps", Xps),  -- POSIX sp: property Z or tab, NL, VT, FF, CR
+      ("xsp", Xsp),  -- Perl sp: property Z or tab, NL, VT, FF, CR
+      ("xuc", Xuc),  -- Univ.-named character: one that can be ...
+      ("xwd", Xwd) ] -- Perl word: property Xan or underscore
+  ]
+  where mapSnd f = map (Data.Bifunctor.second f)
 
 
 --                         Character classes
@@ -796,11 +811,6 @@ stripNullQuotes [] = pure ""
 stripNullQuotes (c : cs) = (:) <$>
   char c <*> (optEmptyQuoting *> stripNullQuotes cs)
 
-notFollowedBy :: String -> ReadP ()
-notFollowedBy s = do
-  input <- look
-  Control.Monad.when (s `isPrefixOf` input) pfail
-
 -- Get all characters cs until s appears a substring, consume s and
 -- return cs
 getUntil :: String -> ReadP String
@@ -813,60 +823,21 @@ postCheck isOk p = do
     then pure result
     else pfail
 
-caseLessChar :: Char -> ReadP Char
-caseLessChar c = satisfy (~== c)
-  where (~==) = (==) `on` toLower
-
-loose :: String -> ReadP String
-loose s = do
-  input <- look
-  case splitByPrefixOn loosely s input of
-    ("", _) -> pfail
-    (s', _) -> string s'
-  where
-    loosely = map toLower .
-      filter (\c -> not (isSpace c && isAscii c || c `elem` ['-','_']))
-
--- Split cs at the length of s', where s' is the longest prefix of cs
--- equal to s "on the image of f". For instance,
--- splitByPrefixOn (filter (/= 'b')) "abbbcb" "babcbbdef"
--- equals ("babcbb","def")
-splitByPrefixOn :: Eq b => ([a] -> b) -> [a] -> [a] -> ([a], [a])
-splitByPrefixOn f s cs =
-  case break sOnf (inits cs) of
-    (_, ss@(_:_)) ->
-      let s' = last $ takeWhile sOnf ss
-      in splitAt (length s') cs
-    _ ->
-      ([], cs)
-  where sOnf = ((==) `on` f) s
-
-
-choiceL :: [ReadP a] -> ReadP a
--- Combines all parsers in the specified list using <++
-choiceL []     = pfail
-choiceL [p]    = p
-choiceL (p:ps) = p <++ choiceL ps
-
--- Helper to create a parser suing loose matching on the alternatives
--- generated from pcre2test -LP and -LS. Since we use <++ as choice,
--- we sort the stings reverse alphabetically: if two strings share a
--- prefix, the longest one will come first, and the others will be
--- discarded.
-mkLooseChoiceParser namesAndCons = choiceL alternatives
-  where
-    alternatives =
-      [constructor <$ loose nameOrAbbrev
-      | (nameOrAbbrev, constructor) <- sortedPairs]
-    sortedPairs =
-      sortOn (Data.Ord.Down . fst) $ concat
-      [[(nameOrAbbrev, constructor)
-       | nameOrAbbrev <- nameOrAbbrevs]
-      | (nameOrAbbrevs, constructor) <- namesAndCons]
+-- For "loose matching" in character type property names
+loosely
+  = map toLower . filter (\c -> not (isSpace c && isAscii c || c `elem` ['-','_']))
 
 
 ------------------------------------------------------------------------------
 --                           Misc helpers
+
+-- Helper to create a an association list of property names generated
+-- from pcre2test -LP and -LS.
+flatNamesAndCons :: [([a], b)] -> [(a, b)]
+flatNamesAndCons namesAndCons = concat
+  [[(nameOrAbbrev, constructor)
+   | nameOrAbbrev <- nameOrAbbrevs]
+  | (nameOrAbbrevs, constructor) <- namesAndCons]
 
 charclassCase fOneof fNoneof charclass =
   case charclass of
