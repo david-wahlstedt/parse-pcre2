@@ -695,9 +695,10 @@ condition
   -- named group exists.
   <++ (Rec <$ char 'R')
   <++ (DefGrp <$ string "DEFINE")
-  <++ ((\rel n m -> Version (rel ++ show n ++ "." ++ show m)) <$>
+  <++ ((\relSymb major dot minor ->
+          Version (relSymb ++ major ++ dot ++ minor)) <$>
        (string "VERSION" *> string ">=" <++ string "=") <*>
-       (natural <* char '.') <*> natural)
+       many1 digit <*> option "" (string ".") <*> many digit)
   <++ (NamedRef <$>
        (char '<' *> groupName <* char '>') <++
         (char '\'' *> groupName <* char '\'') <++
