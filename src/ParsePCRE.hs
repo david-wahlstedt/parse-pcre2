@@ -103,23 +103,23 @@ quoting
 
 escChar :: ReadP Escape
 escChar
-  =   (EAlert <$ string "\\a")                  -- \a
-  <++ (ECtrl  <$> (string "\\c" *> nonCtrl))    -- \c non-ctrl-char
-  <++ (EEsc   <$ string "\\e")                  -- \e Esc
-  <++ (EFF    <$ string "\\f")                  -- \f FF
-  <++ (ENL    <$ string "\\n")                  -- \n
-  <++ (ECR    <$ string "\\r")                  -- \r
-  <++ (ETab   <$ string "\\t")                  -- \t
-  <++ (EOct   <$> (string "\\0" *> octDigits))           -- \o[0-7]{0,2}
-  <++ (EOctOrBackRef <$> (string "\\" *> backRefDigits)) -- \[1-9][0-9]{2}
-  <++ (EOctVar <$> (string "\\o{" *> many1 octDigit <* char '}')) -- \o{[0-7]+}
-  <++ (EUni <$> (string "\\N{U+" *> many1 hexDigit <* char '}'))  -- \N{U+h+}
-  <++ (EChar 'U' <$ string "\\U")                                 -- \U
-  <++ (EHexVar <$> (string "\\x{" *> many1 hexDigit <* char '}')) -- \x{h+}
-  <++ (EHex    <$> (string "\\x" *> hexDigits))                   -- \xh{0,2}
-  <++ (EHexVar <$> (string "\\u{" *> many1 hexDigit <* char '}')) -- \u{h+}
-  <++ (EHexVar <$> (string "\\u" *> count 4 hexDigit))            -- \uhhhh
-  <++ (EChar   <$> (string "\\" *> nonAlphanumAscii)) -- \ non alphanum ascii
+  =   (EAlert <$          string "\\a")                   -- \a
+  <++ (ECtrl  <$>        (string "\\c" *> nonCtrl))       -- \c non-ctrl-char
+  <++ (EEsc   <$          string "\\e")                   -- \e Esc
+  <++ (EFF    <$          string "\\f")                   -- \f FF
+  <++ (ENL    <$          string "\\n")                   -- \n
+  <++ (ECR    <$          string "\\r")                   -- \r
+  <++ (ETab   <$          string "\\t")                   -- \t
+  <++ (EOct   <$>        (string "\\0" *> octDigits 0 2)) -- \0[0-7]{0,2}
+  <++ (EOctOrBackRef <$> (string "\\"  *> backRefDigits)) -- \[1-9][0-9]{2}
+  <++ (EOctVar <$> (string "\\o{" *> many1 octDigit <* char '}'))  -- \o{[0-7]+}
+  <++ (EUni    <$> (string "\\N{U+" *> many1 hexDigit <* char '}'))-- \N{U+h+}
+  <++ (EChar 'U' <$ string "\\U")                                  -- \U
+  <++ (EHexVar <$> (string "\\x{" *> many1 hexDigit <* char '}'))  -- \x{h+}
+  <++ (EHex    <$> (string  "\\x" *> hexDigits 0 2))               -- \xh{0,2}
+  <++ (EHexVar <$> (string "\\u{" *> many1 hexDigit <* char '}'))  -- \u{h+}
+  <++ (EHexVar <$> (string  "\\u" *> hexDigits 4 4))               -- \uhhhh
+  <++ (EChar   <$> (string   "\\" *> nonAlphanumAscii)) -- \ non alphanum ascii
 
 
 --                         Character types
@@ -376,6 +376,8 @@ charClassAtom' :: ReadP CharclassAtom
 charClassAtom'
   =   (CCQuoting   <$> postCheck (not . null) quoting)
   <++ (CCBackspace <$  string "\\b")
+  <++ (CCEsc . EChar <$> (char '\\' *> (char '8' <++ char '9')))
+  <++ (CCEsc . EOct <$> (char '\\' *> octDigits 1 3))
   <++ (CCEsc       <$> escChar)
   <++ (CCCharType  <$> charTypeCommon)
   <++ (PosixSet    <$> posixSet)
@@ -813,13 +815,17 @@ groupNameChar isFirst
   = satisfy (\c -> not isFirst && isDigit c || isLetter c || c == '_')
 
 -- Parses 1, 2, or 3 digits starting with a positive digit
+
+-- In a future version when we'll keep track on the capture groups in
+-- scope, we will parse this either as a backreference, if valid, in
+-- decimal, or consume up to 3 octal digits, or a many as available in
+-- the input, and treat as an escaped character. If there is a valid
+-- group number which is a proper prefix of an octal sequence, the
+-- octal sequence will be consumed instead: this is the behaviour of
+-- PCRE2 (v10.45).
 backRefDigits :: ReadP String
 backRefDigits
-  = count 3 backRefDigit <++ count 2 backRefDigit <++ count 1 backRefDigit
-
--- backRefDigit is a parser for a digit starting with [1-9]
-backRefDigit :: ReadP Char
-backRefDigit = posDigit <++ digit
+  = (:) <$> posDigit <*> digits 0 2
 
 -- posDigit is a parser for a positive digit [1-9]
 posDigit :: ReadP Char
@@ -829,20 +835,30 @@ posDigit = satisfy (\c -> '1' <= c && c <= '9')
 digit :: ReadP Char
 digit = satisfy isDigit
 
+-- Parses lo, lo+1, ..., hi decimal digits, trying the longest match first
+digits :: Int -> Int -> ReadP String
+digits lo hi | lo == hi = count lo digit
+             | lo  < hi = count hi digit <++ digits lo (hi - 1)
+             | otherwise = error $ "invalid range: " ++ show (lo, hi)
+
 octDigit :: ReadP Char
 octDigit = satisfy (`elem` ['0'..'7'])
 
--- Parses 0, 1, or 2 octal digits, trying the longest match first
-octDigits :: ReadP String
-octDigits = count 2 octDigit <++ count 1 octDigit <++ pure []
-
--- Parses 1 or 2 hex digits, or an empty string, trying the longest match first
-hexDigits :: ReadP String
-hexDigits = count 2 hexDigit <++ count 1 hexDigit <++ pure []
+-- Parses lo, lo+1, ..., hi octal digits, trying the longest match first
+octDigits :: Int -> Int -> ReadP String
+octDigits lo hi | lo == hi = count lo octDigit
+                | lo  < hi = count hi octDigit <++ octDigits lo (hi - 1)
+                | otherwise = error $ "invalid range: " ++ show (lo, hi)
 
 -- hexDigit is a parser for a single hex digit
 hexDigit :: ReadP Char
 hexDigit = satisfy isHexDigit
+
+-- Parses lo, lo+1, ..., hi hex digits, trying the longest match first
+hexDigits :: Int -> Int -> ReadP String
+hexDigits lo hi | lo == hi = count lo hexDigit
+                | lo  < hi = count hi hexDigit <++ hexDigits lo (hi - 1)
+                | otherwise = error $ "invalid range: " ++ show (lo, hi)
 
 natural :: ReadP Int
 natural = read <$> many1 digit
