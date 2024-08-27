@@ -5,3 +5,10 @@
 \pP
 \pS
 \pZ
+\pc
+\pl
+\pm
+\pn
+\pp
+\ps
+\pz
