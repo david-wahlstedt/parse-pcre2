@@ -1,0 +1,80 @@
+cabal-version: 2.2
+
+-- This file has been generated from package.yaml by hpack version 0.36.0.
+--
+-- see: https://github.com/sol/hpack
+
+name:           parse-pcre2
+version:        0.1.0.0
+description:    Please see the README on GitHub at <https://github.com/david-wahlstedt/parse-pcre2#readme>
+homepage:       https://github.com/david-wahlstedt/parse-pcre2#readme
+bug-reports:    https://github.com/david-wahlstedt/parse-pcre2/issues
+author:         David Wahlstedt
+maintainer:     david.wahlstedt@gmail.com
+copyright:      David Wahlstedt
+license:        BSD-3-Clause
+license-file:   LICENSE
+build-type:     Simple
+extra-source-files:
+    README.md
+    CHANGELOG.md
+
+source-repository head
+  type: git
+  location: https://github.com/david-wahlstedt/parse-pcre2
+
+library
+  exposed-modules:
+      AbsPCRE
+      ParsePCRE
+      AbsBinProp
+      AbsScriptName
+      ParsHelpBinProp
+      ParsHelpScriptName
+  other-modules:
+      Paths_parse_pcre2
+  autogen-modules:
+      Paths_parse_pcre2
+  hs-source-dirs:
+      src
+      code_gen
+      generated
+  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -XLambdaCase
+  build-depends:
+      base >=4.7 && <5
+    , pretty-show
+    , unordered-containers
+  default-language: Haskell2010
+
+executable parse-pcre2
+  main-is: Main.hs
+  other-modules:
+      Paths_parse_pcre2
+  autogen-modules:
+      Paths_parse_pcre2
+  hs-source-dirs:
+      app
+  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -XLambdaCase -O2 -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      base >=4.7 && <5
+    , parse-pcre2
+    , pretty-show
+    , unordered-containers
+  default-language: Haskell2010
+
+test-suite parse-pcre2-test
+  type: exitcode-stdio-1.0
+  main-is: Spec.hs
+  other-modules:
+      Paths_parse_pcre2
+  autogen-modules:
+      Paths_parse_pcre2
+  hs-source-dirs:
+      test
+  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -XLambdaCase -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      base >=4.7 && <5
+    , parse-pcre2
+    , pretty-show
+    , unordered-containers
+  default-language: Haskell2010
