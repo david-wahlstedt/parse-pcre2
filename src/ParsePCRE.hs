@@ -15,9 +15,9 @@ import Data.Char(isDigit, isAlphaNum, isLetter,
                  isAscii, isControl, isHexDigit, isSpace, toLower)
 import qualified Data.HashMap.Strict as HM
 import Text.ParserCombinators.ReadP(ReadP, get, string, char, manyTill, count,
-                                    satisfy, (<++), option, skipSpaces, eof,
-                                    sepBy, readP_to_S)
-import Control.Applicative
+                                    satisfy, (+++), (<++), option, skipSpaces,
+                                    many, many1, sepBy, pfail, eof, readP_to_S)
+--import Control.Applicative
 
 import AbsPCRE
 
@@ -115,12 +115,12 @@ escChar
   <|| ETab   <$          string "\\t"                   -- \t
   <|| EOct   <$>        (string "\\0" *> octDigits 0 2) -- \0[0-7]{0,2}
   <|| EOctOrBackRef <$> (string "\\"  *> backRefDigits) -- \[1-9][0-9]{2}
-  <|| EOctVar <$> (string "\\o{" *> some octDigit <* char '}')  -- \o{[0-7]+}
-  <|| EUni    <$> (string "\\N{U+" *> some hexDigit <* char '}')-- \N{U+h+}
+  <|| EOctVar <$> (string "\\o{" *> many1 octDigit <* char '}')  -- \o{[0-7]+}
+  <|| EUni    <$> (string "\\N{U+" *> many1 hexDigit <* char '}')-- \N{U+h+}
   <|| EChar 'U' <$ string "\\U"                                  -- \U
-  <|| EHexVar <$> (string "\\x{" *> some hexDigit <* char '}')  -- \x{h+}
+  <|| EHexVar <$> (string "\\x{" *> many1 hexDigit <* char '}')  -- \x{h+}
   <|| EHex    <$> (string  "\\x" *> hexDigits 0 2)               -- \xh{0,2}
-  <|| EHexVar <$> (string "\\u{" *> some hexDigit <* char '}')  -- \u{h+}
+  <|| EHexVar <$> (string "\\u{" *> many1 hexDigit <* char '}')  -- \u{h+}
   <|| EHexVar <$> (string  "\\u" *> hexDigits 4 4)               -- \uhhhh
   <|| EChar   <$> (string   "\\" *> nonAlphanumAscii) -- \ non alphanum ascii
 
@@ -192,27 +192,27 @@ ctBody = do
       -- All other \p and \P properties
       miscProp subject
     _ ->
-      empty
+      pfail
 
 -- "General category properties for \p and \P" and
 -- "PCRE2 special category properties for \p and \P"
 miscProp :: String -> ReadP CTProperty
-miscProp s = maybe empty pure $ HM.lookup s miscProps
+miscProp s = maybe pfail pure $ HM.lookup s miscProps
 
 -- namesAndConsScriptName is gnerated from ../pcre2test/pcre2test-LS.txt
 scriptName :: String -> ReadP ScriptName
-scriptName s = maybe empty pure $ HM.lookup s scriptNames
+scriptName s = maybe pfail pure $ HM.lookup s scriptNames
 scriptNames :: HM.HashMap String ScriptName
 scriptNames = HM.fromList $ flatNamesAndCons namesAndConsScriptName
 
 -- namesAndConsBinProp is generated from ../pcre2test/pcre2test-LP.txt
 binProp :: String -> ReadP BinProp
-binProp s = maybe empty pure $ HM.lookup s binProps
+binProp s = maybe pfail pure $ HM.lookup s binProps
 binProps :: HM.HashMap String BinProp
 binProps = HM.fromList $ flatNamesAndCons namesAndConsBinProp
 
 bidi :: String -> ReadP CTBidiClass
-bidi s = maybe empty pure $ lookup s bidiClasses
+bidi s = maybe pfail pure $ lookup s bidiClasses
 
 bidiClasses :: [(String, CTBidiClass)]
 bidiClasses =
@@ -701,7 +701,7 @@ condition
   <|| (\relSymb major dot minor ->
           Version (relSymb ++ major ++ dot ++ minor)) <$>
        (string "VERSION" *> string ">=" <|| string "=") <*>
-       some digit <*> option "" (string ".") <*> many digit
+       many1 digit <*> option "" (string ".") <*> many digit
   <||  NamedRef <$>
        (char '<' *> groupName <* char '>' <||
         char '\'' *> groupName <* char '\'' <||
@@ -744,15 +744,15 @@ scriptRun
 backtrackControl :: ReadP BacktrackControl
 backtrackControl
   =   Accept <$> (string "(*ACCEPT" *> optName <* char ')')
-  <|| Fail   <$> ((string "(*FAIL" <|> string "(*F") *> optName <* char ')')
+  <|| Fail   <$> ((string "(*FAIL" <|| string "(*F") *> optName <* char ')')
   <|| MarkName <$>
-       (string "(*MARK:" <|| string "(*:" *> some nameChar <* char ')')
+       (string "(*MARK:" <|| string "(*:" *> many1 nameChar <* char ')')
   <|| Commit <$> (string "(*COMMIT" *> optName <* char ')')
   <|| Prune <$> (string "(*PRUNE" *> optName <* char ')')
   <|| Skip <$> (string "(*SKIP" *> optName <* char ')')
   <|| Then <$> (string "(*THEN" *> optName <* char ')')
-  where optName = option Nothing (Just <$> (char ':' *> some nameChar))
-                  <|> (Nothing <$ char ':')
+  where optName = option Nothing (Just <$> (char ':' *> many1 nameChar))
+                  +++ (Nothing <$ char ':')
         nameChar = satisfy (/=')')
 
 
@@ -862,7 +862,7 @@ hexDigits lo hi | lo == hi = count lo hexDigit
                 | otherwise = error $ "invalid range: " ++ show (lo, hi)
 
 natural :: ReadP Int
-natural = read <$> some digit
+natural = read <$> many1 digit
 
 positive :: ReadP Int
 positive = postCheck (> 0) natural
@@ -884,7 +884,7 @@ postCheck isOk p = do
   result <- p
   if isOk result
     then pure result
-    else empty
+    else pfail
 
 -- For "loose matching" in character type property names
 loosely :: String -> String
