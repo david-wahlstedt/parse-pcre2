@@ -88,8 +88,8 @@ quantifiable
   <|| Chartype  <$> charType
   <|| Cond      <$> conditional
   <|| Charclass <$> charClass
-  <|| Ref       <$> backRef
-  <|| SubRef    <$> subRef
+  <|| BackRef   <$> backRef
+  <|| SubCall   <$> subCall
   <|| literal
 
 
@@ -616,7 +616,7 @@ lookAround
 
 --               Backreferences and subroutine calls
 
-backRef :: ReadP Ref
+backRef :: ReadP BackReference
 backRef
   =   ByName   <$> refByName
   <|| Relative <$> refRelative
@@ -643,9 +643,9 @@ refByNumber
   <|| string  "\\g"  *> positive
   -- \ digit is handled by EOctOrBackRef
 
--- subroutine references (possibly recursive)
-subRef :: ReadP SubRef
-subRef
+-- Subroutine references (possibly recursive)
+subCall :: ReadP SubroutineCall
+subCall
   =   (Recurse <$ string "(?R)" )
   <|| CallAbs <$>
        (string "(?"    *> natural <* char ')'

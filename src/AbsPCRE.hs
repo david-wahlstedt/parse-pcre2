@@ -28,8 +28,8 @@ data Re
   | Group Group Re
   | OptSet OptionSetting
   | ScriptRun ScriptRunMode Re
-  | Ref Ref
-  | SubRef SubRef
+  | BackRef BackReference
+  | SubCall SubroutineCall
   | Look Direction LookaroundMode Re
   | Cond Conditional
   | Backtrack BacktrackControl
@@ -377,13 +377,13 @@ data ScriptRunMode
 
 --               Backreferences and subroutine calls
 
-data Ref
+data BackReference
   = ByNumber Int  -- \n, \gn, \g{n}
   | Relative Int  -- \g+n, \g-n, \g{+n}, \g{-n}
   | ByName String
   deriving Show
 
-data SubRef
+data SubroutineCall
   = Recurse     --     (?R)        recurse whole pattern
   | CallAbs Int --     (?n)        call subroutine by absolute number
   --                   \g<n>        (Oniguruma)
