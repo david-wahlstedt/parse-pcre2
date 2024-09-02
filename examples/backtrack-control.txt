@@ -10,9 +10,11 @@
 (*F:)
 (*F:x)
 
-(*:x)
 (*MARK: 	5 46(5|46&T😀)
-(*MARK:a/y_)
+(*MARK:a/y_)(?# / is part of the name: delimit subject with \" when using pcre2test)
+(*MARK: )(?# even space is valid as name)
+(*:x)(?# short form of MARK)
+(*:a/y_)
 
 (*COMMIT)
 (*COMMIT:)

@@ -747,7 +747,7 @@ backtrackControl
   =   Accept <$> (string "(*ACCEPT" *> optName <* char ')')
   <|| Fail   <$> ((string "(*FAIL" <|| string "(*F") *> optName <* char ')')
   <|| MarkName <$>
-       (string "(*MARK:" <|| string "(*:" *> many1 nameChar <* char ')')
+       ((string "(*MARK:" <|| string "(*:") *> many1 nameChar <* char ')')
   <|| Commit <$> (string "(*COMMIT" *> optName <* char ')')
   <|| Prune <$> (string "(*PRUNE" *> optName <* char ')')
   <|| Skip <$> (string "(*SKIP" *> optName <* char ')')
