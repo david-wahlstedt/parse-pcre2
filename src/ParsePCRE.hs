@@ -17,7 +17,6 @@ import qualified Data.HashMap.Strict as HM
 import Text.ParserCombinators.ReadP(ReadP, get, string, char, manyTill, count,
                                     satisfy, (+++), (<++), option, skipSpaces,
                                     many, many1, sepBy, pfail, eof, readP_to_S)
---import Control.Applicative
 
 import AbsPCRE
 
@@ -158,11 +157,11 @@ ctProperty
   <|| CTProp  <$> (string "\\p" *> singleCharGeneral)
   <|| CTNProp <$> (string "\\P" *> singleCharGeneral)
 
--- Single character properties C, L, N, M, P, S, and Z.
+-- Single character general category properties C, L, N, M, P, S, and Z.
 singleCharGeneral :: ReadP CTProperty
 singleCharGeneral = do
   c <- get
-  miscProp [toLower c]
+  genCatProp [toLower c]
 
 -- Everything inside \p{ } or \P{ } is converted into lower case and
 -- stripped from ascii range spaces, hyphens and underscores.
@@ -170,7 +169,7 @@ singleCharGeneral = do
 ctBody :: ReadP CTProperty
 ctBody = do
   body <- getUntil "}"
-  case break (`elem` [':','=']) $ loosely body of
+  case break (`elem` [':','=']) $ normalize body of
     -- Bidi classes
     (prefix, _: subject) | prefix `elem` ["bc", "bidiclass"] ->
       CTBidi <$> bidi subject
@@ -185,19 +184,21 @@ ctBody = do
       -- for example, \p{Adlam}, it is treated as \p{scx:Adlam}:
       CTScript . Extensions <$> scriptName subject
       <||
-      -- "binary properties"
+      -- "Binary properties"
       CTBinProp <$> binProp subject
       <||
       -- All other \p and \P properties
-      -- All other \p and \P properties
-      miscProp subject
+      genCatProp subject
     _ ->
       pfail
+  where normalize
+          = map toLower . filter
+            (\c -> not (isSpace c && isAscii c || c `elem` ['-','_']))
 
 -- "General category properties for \p and \P" and
 -- "PCRE2 special category properties for \p and \P"
-miscProp :: String -> ReadP CTProperty
-miscProp s = maybe pfail pure $ HM.lookup s miscProps
+genCatProp :: String -> ReadP CTProperty
+genCatProp s = maybe pfail pure $ HM.lookup s genCatProps
 
 -- namesAndConsScriptName is gnerated from ../pcre2test/pcre2test-LS.txt
 scriptName :: String -> ReadP ScriptName
@@ -241,8 +242,8 @@ bidiClasses =
   , ("ws",  BidiWS)
   ]
 
-miscProps :: HM.HashMap String CTProperty
-miscProps = HM.fromList $ concat
+genCatProps :: HM.HashMap String CTProperty
+genCatProps = HM.fromList $ concat
   [
     [ ("any", CTUAny) ],
     mapSnd (CTGenProp . Other)
@@ -803,7 +804,7 @@ topLevelSpecials = ['^', '\\', '|', '(', ')', '[', '$', '+', '*', '?', '.']
 
 
 ------------------------------------------------------------------------------
--- Parser helpers
+--                          Parser helpers
 
 nonCtrl :: ReadP Char
 nonCtrl = satisfy (not . isControl)
@@ -816,7 +817,6 @@ groupNameChar isFirst
   = satisfy (\c -> not isFirst && isDigit c || isLetter c || c == '_')
 
 -- Parses 1, 2, or 3 digits starting with a positive digit
-
 -- In a future version when we'll keep track on the capture groups in
 -- scope, we will parse this either as a backreference, if valid, in
 -- decimal, or consume up to 3 octal digits, or a many as available in
@@ -879,6 +879,7 @@ stripNullQuotes (c : cs) = (:) <$>
 getUntil :: String -> ReadP String
 getUntil s = manyTill get (string s)
 
+-- Parse with p, but succeed and comsume input only if isOk p holds.
 postCheck :: (a -> Bool) -> ReadP a -> ReadP a
 postCheck isOk p = do
   result <- p
@@ -886,10 +887,21 @@ postCheck isOk p = do
     then pure result
     else pfail
 
--- For "loose matching" in character type property names
-loosely :: String -> String
-loosely
-  = map toLower . filter (\c -> not (isSpace c && isAscii c || c `elem` ['-','_']))
+-- For efficiency, it is crucial that this operator discards its
+-- second argument if the first succeeds: for instance,
+-- examples/charclass-hex2-mixed-ranges.txt parses about 2300 times
+-- slower using only +++ (or <|> for that sake)! This has to do with
+-- the ambiguous grammars, e.g., \x, \xd, \xdd are all valid. This
+-- implies also that the order of the alternatives does matter.
+infixr 3 <||
+(<||) :: ReadP a -> ReadP a -> ReadP a
+(<||) = (<++)
+
+oneStr :: [String] -> ReadP String
+oneStr = oneOf . map string
+
+oneOf :: [ReadP a] -> ReadP a
+oneOf = foldr1 (<||)
 
 
 ------------------------------------------------------------------------------
@@ -908,9 +920,3 @@ charclassCase fOneof fNoneof charclass =
   case charclass of
     Oneof  items -> fOneof  items
     Noneof items -> fNoneof items
-
-infixr 3 <||
-(<||) = (<++)
-
-oneStr ss = oneOf (map string ss)
-oneOf ps = foldr1 (<||) ps
