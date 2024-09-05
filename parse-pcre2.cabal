@@ -29,8 +29,8 @@ library
       ParsePCRE
       AbsBinProp
       AbsScriptName
-      ParsHelpBinProp
-      ParsHelpScriptName
+      ParseHelpBinProp
+      ParseHelpScriptName
   other-modules:
       Paths_parse_pcre2
   autogen-modules:

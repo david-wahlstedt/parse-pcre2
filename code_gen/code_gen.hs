@@ -50,10 +50,10 @@ genCode fileName name = do
     genModule dataModuleName [] dataDefs
 
   let parserHelper = genParserHelper name namesShorts
-      parsModuleName = "ParsHelp" ++ name
+      parseHelpModuleName = "ParseHelp" ++ name
   -- write parser helper code to be imported by ParsePCRE
-  writeFile (mkHsFilePath parsModuleName) $
-    genModule parsModuleName [dataModuleName] parserHelper
+  writeFile (mkHsFilePath parseHelpModuleName) $
+    genModule parseHelpModuleName [dataModuleName] parserHelper
   where
     mkHsFilePath moduleName = generatedCodePrefix ++ "/" ++ moduleName ++ ".hs"
 
