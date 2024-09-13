@@ -78,7 +78,8 @@ atom'
 
 quantifiable :: ReadP Re
 quantifiable
-  =   Escape    <$> escChar
+  =   OctOrBackRef <$> (string "\\"  *> octOrBackRefDigits) -- \\[1-9][0-9]{2}
+  <|| Escape    <$> escChar
   -- a quoting is not really quantifiable, but its last character will
   -- be quanfitied, and this is handeled by the atom parser
   <|| Quoting   <$> quoting
@@ -113,7 +114,6 @@ escChar
   <|| ECR    <$          string "\\r"                   -- \r
   <|| ETab   <$          string "\\t"                   -- \t
   <|| EOct   <$>        (string "\\0" *> octDigits 0 2) -- \0[0-7]{0,2}
-  <|| EOctOrBackRef <$> (string "\\"  *> backRefDigits) -- \[1-9][0-9]{2}
   <|| EOctVar <$> (string "\\o{" *> many1 octDigit <* char '}')  -- \o{[0-7]+}
   <|| EUni    <$> (string "\\N{U+" *> many1 hexDigit <* char '}')-- \N{U+h+}
   <|| EChar 'U' <$ string "\\U"                                  -- \U
@@ -468,6 +468,7 @@ anchor
 
 --                         Groups
 
+-- TODO: deeply nested groups are terribly inefficient!
 group :: ReadP Re
 group
   =   atomicNonCapture
@@ -641,7 +642,7 @@ refByNumber :: ReadP Int
 refByNumber
   =   string  "\\g{" *> positive <* char '}'
   <|| string  "\\g"  *> positive
-  -- \ digit is handled by EOctOrBackRef
+  -- \\[1-9][0-9]{0,2} is handled by OctOrBackRef
 
 -- Subroutine references (possibly recursive)
 subCall :: ReadP SubroutineCall
@@ -816,17 +817,11 @@ groupNameChar :: Bool -> ReadP Char
 groupNameChar isFirst
   = satisfy (\c -> not isFirst && isDigit c || isLetter c || c == '_')
 
--- Parses 1, 2, or 3 digits starting with a positive digit
--- In a future version when we'll keep track on the capture groups in
--- scope, we will parse this either as a backreference, if valid, in
--- decimal, or consume up to 3 octal digits, or a many as available in
--- the input, and treat as an escaped character. If there is a valid
--- group number which is a proper prefix of an octal sequence, the
--- octal sequence will be consumed instead: this is the behaviour of
--- PCRE2 (v10.45).
-backRefDigits :: ReadP String
-backRefDigits
-  = (:) <$> posDigit <*> digits 0 2
+octOrBackRefDigits :: ReadP String
+octOrBackRefDigits -- slightly more efficient than digits 0 2
+  =   (\d1 d2 d3 -> [d1, d2, d3]) <$> posDigit <*> digit <*> digit
+  <|| (\d1 d2 -> [d1, d2]) <$> posDigit <*> digit
+  <|| (:[]) <$> posDigit
 
 -- posDigit is a parser for a positive digit [1-9]
 posDigit :: ReadP Char
@@ -903,15 +898,22 @@ oneStr = oneOf . map string
 oneOf :: [ReadP a] -> ReadP a
 oneOf = foldr1 (<||)
 
--- Traverse the expression, keeping track of the group index: group
--- index i, for highest group we've encountered so far, from left to
--- right, in an in-order traversal manner
+------------------------------------------------------------------------------
+--                      Syntax rebuild helpers
+
+-- Traverse the expression, keeping track of the highest group we've
+-- encountered so far, from left to right, in an in-order traversal
+-- manner. The OctOrBackRef ds ocurrences are then replaced by either
+-- BackRef or EOct followed by possible trailing non octal digit
+-- literals, dependent on whether the highest capture group count i so
+-- far: length ds == 1 || i > read ds -> BackRef; otherwise Escape EOct.
 resolveOctOrBackrefs e = snd $ resolveOBR 0 e
 
 resolveOBR :: Int -> Re -> (Int, Re)
 resolveOBR i (Group Capture e) =
   Group Capture <$> resolveOBR (i + 1) e
-resolveOBR i (Escape (EOctOrBackRef ds))
+-- TODO: handle Group NonCaptureReset
+resolveOBR i (OctOrBackRef ds)
   -- The ds is between 1 and 3 digits. If the decimal number n they
   -- encode, is above the highest capture group to the left, and ds
   -- has a non-empty octal prefix, ds is considered as an octal escape
@@ -960,7 +962,6 @@ resolveOBRCondl i (CondYesNo c e1 e2) =
 
 resolveOBRCond i (Assert mc dir m e) = Assert mc dir m <$> resolveOBR i e
 resolveOBRCond i cond = (i, cond)
-
 
 
 ------------------------------------------------------------------------------

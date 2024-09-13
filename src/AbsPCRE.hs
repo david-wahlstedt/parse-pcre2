@@ -20,6 +20,7 @@ data Re
   | Quant QuantifierMode Quantifier Re
   | Lit Char
   | Quoting String -- \Q <anything without \E> \E
+  | OctOrBackRef String -- \[1-7]{1,3}
   | Escape Escape
   | Chartype Chartype
   | Charclass Charclass
@@ -48,7 +49,6 @@ data Escape
   | ECR               -- \r
   | ETab              -- \t
   | EOct String       -- \0[0-7]{1,2}
-  | EOctOrBackRef String -- \[1-7]{1,3}
   | EOctVar String    -- \o{0*[0-7]+}
   | EUni String       -- \N{U+0*h+}
   | EHex String       -- \xh{,2}
