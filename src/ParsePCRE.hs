@@ -10,7 +10,6 @@
 
 module ParsePCRE where
 
-import Data.Bifunctor (second)
 import Data.Char(isDigit, isAlphaNum, isLetter, isAscii, isControl,
                  isHexDigit, isOctDigit, isSpace, toLower)
 import qualified Data.HashMap.Strict as HM
@@ -246,14 +245,14 @@ genCatProps :: HM.HashMap String CTProperty
 genCatProps = HM.fromList $ concat
   [
     [ ("any", CTUAny) ],
-    mapSnd (CTGenProp . Other)
+    CTGenProp . Other <<$>>
     [ ("c" , C   ),   -- Other
       ("cc", Cc  ),   -- Control
       ("cf", Cf  ),   -- Format
       ("cn", Cn  ),   -- Unassigned
       ("co", Co  ),   -- Private use
       ("cs", Cs  ) ], -- , -- Surrogate
-    mapSnd (CTGenProp . Letter)
+    CTGenProp . Letter <<$>>
     [ ("l",  L   ),   -- Letter
       ("lc", Lc  ),   -- Ll, Lu, or Lt
       ("l&", Llut),   -- "L&": Ll, Lu, or Lt
@@ -262,17 +261,17 @@ genCatProps = HM.fromList $ concat
       ("lo", Lo  ),   -- Other letter
       ("lt", Lt  ),   -- Title case letter
       ("lu", Lu  ) ],   -- Upper case letter
-    mapSnd (CTGenProp . Mark)
+    CTGenProp . Mark <<$>>
     [ ("m",   M  ),   -- Mark
       ("mc",  Mc ),   -- Spacing mark
       ("me",  Me ),   -- Enclosing mark
       ("mn",  Mn ) ], -- Non-spacing mark
-    mapSnd (CTGenProp . Number)
+    CTGenProp . Number <<$>>
     [ ("n",   N  ),   -- Number
       ("nd",  Nd ),   -- Decimal number
       ("nl",  Nl ),   -- Letter number
       ("no",  No ) ], -- Other number
-    mapSnd (CTGenProp . Punctuation)
+    CTGenProp . Punctuation <<$>>
     [ ("p",   P  ),   -- Punctuation
       ("pc",  Pc ),   -- Connector punctuation
       ("pd",  Pd ),   -- Dash punctuation
@@ -281,26 +280,26 @@ genCatProps = HM.fromList $ concat
       ("pi",  Pi ),   -- Initial punctuation
       ("po",  Po ),   -- Other punctuation
       ("ps",  Ps ) ], -- Open punctuation
-    mapSnd (CTGenProp . Symbol)
+    CTGenProp . Symbol <<$>>
     [ ("s",   S  ),   -- Symbol
       ("sc",  Sc ),   -- Currency symbol
       ("sk",  Sk ),   -- Modifier symbol
       ("sm",  Sm ),   -- Mathematical symbol
       ("so",  So ) ], -- Other symbol
-    mapSnd (CTGenProp . Separator)
+    CTGenProp . Separator <<$>>
     [ ("z",   Z  ),   -- Separator
       ("zl",  Zl ),   -- Line separator
       ("zp",  Zp ),   -- Paragraph separator
       ("zs",  Zs ) ], -- Space separator
-    mapSnd CTSpecProp
+    CTSpecProp <<$>>
     [ ("xan", Xan),  -- Alphanumeric: union of properties L and N
       ("xps", Xps),  -- POSIX sp: property Z or tab, NL, VT, FF, CR
       ("xsp", Xsp),  -- Perl sp: property Z or tab, NL, VT, FF, CR
       ("xuc", Xuc),  -- Univ.-named character: one that can be ...
       ("xwd", Xwd) ] -- Perl word: property Xan or underscore
   ]
-  where mapSnd f = map (second f)
-
+  where infixl 8 <<$>>
+        (<<$>>) = fmap . fmap
 
 --                         Character classes
 
