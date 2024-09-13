@@ -11,8 +11,8 @@
 module ParsePCRE where
 
 import Data.Bifunctor (second)
-import Data.Char(isDigit, isAlphaNum, isLetter,
-                 isAscii, isControl, isHexDigit, isSpace, toLower)
+import Data.Char(isDigit, isAlphaNum, isLetter, isAscii, isControl,
+                 isHexDigit, isOctDigit, isSpace, toLower)
 import qualified Data.HashMap.Strict as HM
 import Text.ParserCombinators.ReadP(ReadP, get, string, char, manyTill, count,
                                     satisfy, (+++), (<++), option, skipSpaces,
@@ -39,7 +39,7 @@ parsePCRE input = case readP_to_S (re <* eof) input of
 --                         Basic constructs
 
 re :: ReadP Re
-re = alt
+re = resolveOctOrBackrefs <$> alt
 
 alt :: ReadP Re
 alt = Alt <$> sepBy sequencing (char '|')
@@ -902,6 +902,65 @@ oneStr = oneOf . map string
 
 oneOf :: [ReadP a] -> ReadP a
 oneOf = foldr1 (<||)
+
+-- Traverse the expression, keeping track of the group index: group
+-- index i, for highest group we've encountered so far, from left to
+-- right, in an in-order traversal manner
+resolveOctOrBackrefs e = snd $ resolveOBR 0 e
+
+resolveOBR :: Int -> Re -> (Int, Re)
+resolveOBR i (Group Capture e) =
+  Group Capture <$> resolveOBR (i + 1) e
+resolveOBR i (Escape (EOctOrBackRef ds))
+  -- The ds is between 1 and 3 digits. If the decimal number n they
+  -- encode, is above the highest capture group to the left, and ds
+  -- has a non-empty octal prefix, ds is considered as an octal escape
+  -- followed by the non octal digits as literals. In all other cases
+  -- ds is considered a backreference, and we don't considere here
+  -- whether the reference is too large or not. The octal reference
+  -- may also be above 0o377, and this is not allowed in non-UTF
+  -- mode. We don't take this into account in the parser.
+  | n > i && length ds /= 1 && not (null octs) =
+      (i, Seq (Escape (EOct octs) : map Lit rest))
+  | otherwise =
+      (i, BackRef $ ByNumber n)
+  where
+    n = read ds :: Int
+    (octs, rest) = span isOctDigit ds
+resolveOBR i (Alt es) =
+    let (i', es') = resolveOBRs i es
+    in (i', Alt es')
+resolveOBR i (Seq es) =
+    let (i', es') = resolveOBRs i es
+    in (i', Seq es')
+resolveOBR i (Quant m q e) =
+  Quant m q <$> resolveOBR i e
+resolveOBR i (Group g e) =
+  Group g <$> resolveOBR i e
+resolveOBR i (ScriptRun m e) =
+  ScriptRun m <$> resolveOBR i e
+resolveOBR i (Look d m e) = Look d m <$> resolveOBR i e
+resolveOBR i (Cond c) = Cond <$> resolveOBRCondl i c
+resolveOBR i e = (i,e)
+
+resolveOBRs :: Int -> [Re] -> (Int, [Re])
+resolveOBRs i [] = (i, [])
+resolveOBRs i (e:es) =
+    let (i' , e' ) = resolveOBR i e
+        (i'', es') = resolveOBRs i' es
+    in (i'', e' : es')
+
+resolveOBRCondl i (CondYes c e) =
+    let (i' , c') = resolveOBRCond i c
+    in CondYes c' <$> resolveOBR i' e
+resolveOBRCondl i (CondYesNo c e1 e2) =
+    let (i' , c') = resolveOBRCond i c
+        (i'', e1') = resolveOBR i' e1
+    in CondYesNo c' e1' <$> resolveOBR i'' e2
+
+resolveOBRCond i (Assert mc dir m e) = Assert mc dir m <$> resolveOBR i e
+resolveOBRCond i cond = (i, cond)
+
 
 
 ------------------------------------------------------------------------------
