@@ -16,7 +16,8 @@ import qualified Data.HashMap.Strict as HM
 import Numeric(readOct, readHex)
 import Text.ParserCombinators.ReadP(ReadP, get, string, char, manyTill, count,
                                     satisfy, (+++), (<++), option, skipSpaces,
-                                    many, many1, sepBy, pfail, eof, readP_to_S)
+                                    many, many1, munch, sepBy, pfail, eof,
+                                    readP_to_S)
 
 import AbsPCRE
 
@@ -818,11 +819,9 @@ groupNameChar :: Bool -> ReadP Char
 groupNameChar isFirst
   = satisfy (\c -> not isFirst && isDigit c || isLetter c || c == '_')
 
+-- see resolveOctOrBackrefs
 octOrBackRefDigits :: ReadP String
-octOrBackRefDigits -- slightly more efficient than digits 0 2
-  =   (\d1 d2 d3 -> [d1, d2, d3]) <$> posDigit <*> digit <*> digit
-  <|| (\d1 d2 -> [d1, d2]) <$> posDigit <*> digit
-  <|| (:[]) <$> posDigit
+octOrBackRefDigits = (:) <$> posDigit <*> munch isDigit
 
 -- posDigit is a parser for a positive digit [1-9]
 posDigit :: ReadP Char
@@ -915,14 +914,15 @@ resolveOBR i (Group Capture e) =
   Group Capture <$> resolveOBR (i + 1) e
 -- TODO: handle Group NonCaptureReset
 resolveOBR i (OctOrBackRef ds)
-  -- The ds is between 1 and 3 digits. If the decimal number n they
-  -- encode, is above the highest capture group to the left, and ds
-  -- has a non-empty octal prefix, ds is considered as an octal escape
-  -- followed by the non octal digits as literals. In all other cases
-  -- ds is considered a backreference, and we don't considere here
-  -- whether the reference is too large or not. The octal reference
-  -- may also be above 0o377, and this is not allowed in non-UTF
-  -- mode. We don't take this into account in the parser.
+  -- The octOrBackRefDigits parser consumes as many digits ds as
+  -- available. If the decimal number n, that ds encode, is above the
+  -- highest capture group to the left, and ds has a non-empty octal
+  -- prefix, ds is considered as an octal escape of length at most 3,
+  -- followed by the rest of the digits as literals. In all other
+  -- cases ds is considered a backreference, and we don't considere
+  -- here whether the reference is too large or not. The octal
+  -- reference may also be above 0o377, and this is not allowed in
+  -- non-UTF mode. We don't take this into account in the parser.
   | n > i && length ds /= 1 && not (null octs) =
       (i, Seq $ (Esc $ fromOctStr octs) : map Lit rest)
   | otherwise =
