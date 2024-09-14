@@ -10,9 +10,10 @@
 
 module ParsePCRE where
 
-import Data.Char(isDigit, isAlphaNum, isLetter, isAscii, isControl,
-                 isHexDigit, isOctDigit, isSpace, toLower)
+import Data.Char(chr, isDigit, isAlphaNum, isLetter, isAscii,
+                 isControl, isHexDigit, isOctDigit, isSpace, toLower)
 import qualified Data.HashMap.Strict as HM
+import Numeric(readOct, readHex)
 import Text.ParserCombinators.ReadP(ReadP, get, string, char, manyTill, count,
                                     satisfy, (+++), (<++), option, skipSpaces,
                                     many, many1, sepBy, pfail, eof, readP_to_S)
@@ -78,7 +79,8 @@ atom'
 quantifiable :: ReadP Re
 quantifiable
   =   OctOrBackRef <$> (string "\\"  *> octOrBackRefDigits) -- \\[1-9][0-9]{2}
-  <|| Escape    <$> escChar
+  <|| Esc <$> escChar
+  <|| Ctrl <$> (string "\\c" *> nonCtrl) -- \c non-ctrl-char
   -- a quoting is not really quantifiable, but its last character will
   -- be quanfitied, and this is handeled by the atom parser
   <|| Quoting   <$> quoting
@@ -103,24 +105,23 @@ quoting
 
 --                        Escaped characters
 
-escChar :: ReadP Escape
+escChar :: ReadP Char
 escChar
-  =   EAlert <$          string "\\a"                   -- \a
-  <|| ECtrl  <$>        (string "\\c" *> nonCtrl)       -- \c non-ctrl-char
-  <|| EEsc   <$          string "\\e"                   -- \e Esc
-  <|| EFF    <$          string "\\f"                   -- \f FF
-  <|| ENL    <$          string "\\n"                   -- \n
-  <|| ECR    <$          string "\\r"                   -- \r
-  <|| ETab   <$          string "\\t"                   -- \t
-  <|| EOct   <$>        (string "\\0" *> octDigits 0 2) -- \0[0-7]{0,2}
-  <|| EOctVar <$> (string "\\o{" *> many1 octDigit <* char '}')  -- \o{[0-7]+}
-  <|| EUni    <$> (string "\\N{U+" *> many1 hexDigit <* char '}')-- \N{U+h+}
-  <|| EChar 'U' <$ string "\\U"                                  -- \U
-  <|| EHexVar <$> (string "\\x{" *> many1 hexDigit <* char '}')  -- \x{h+}
-  <|| EHex    <$> (string  "\\x" *> hexDigits 0 2)               -- \xh{0,2}
-  <|| EHexVar <$> (string "\\u{" *> many1 hexDigit <* char '}')  -- \u{h+}
-  <|| EHexVar <$> (string  "\\u" *> hexDigits 4 4)               -- \uhhhh
-  <|| EChar   <$> (string   "\\" *> nonAlphanumAscii) -- \ non alphanum ascii
+  =   '\a'       <$   string "\\a"                   -- \a
+  <|| '\ESC'     <$   string "\\e"                   -- \e Esc
+  <|| '\f'       <$   string "\\f"                   -- \f FF
+  <|| '\n'       <$   string "\\n"                   -- \n
+  <|| '\r'       <$   string "\\r"                   -- \r
+  <|| '\t'       <$   string "\\t"                   -- \t
+  <|| fromOctStr <$> (string "\\0" *> octDigits 0 2) -- \\0[0-7]{0,2}
+  <|| fromOctStr <$> (string "\\o{" *> many1 octDigit <* char '}') -- \o{[0-7]+}
+  <|| fromHexStr <$> (string "\\N{U+" *> many1 hexDigit <* char '}') -- \N{U+h+}
+  <|| 'U'        <$   string "\\U"                                   -- \U
+  <|| fromHexStr <$> (string "\\x{" *> many1 hexDigit <* char '}')   -- \x{h+}
+  <|| fromHexStr <$> (string "\\x"  *> hexDigits 0 2)                -- \xh{0,2}
+  <|| fromHexStr <$> (string "\\u{" *> many1 hexDigit <* char '}')   -- \u{h+}
+  <|| fromHexStr <$> (string "\\u"  *> hexDigits 4 4)                -- \uhhhh
+  <|| string   "\\" *> nonAlphanumAscii -- \ non alphanum ascii
 
 
 --                         Character types
@@ -379,9 +380,10 @@ charClassAtom' :: ReadP CharclassAtom
 charClassAtom'
   =   CCQuoting   <$> postCheck (not . null) quoting
   <|| CCBackspace <$  string "\\b"
-  <|| CCEsc . EChar <$> (char '\\' *> (char '8' <|| char '9'))
-  <|| CCEsc . EOct <$> (char '\\' *> octDigits 1 3)
-  <|| CCEsc       <$> escChar
+  <|| CCEsc <$> (char '\\' *> (char '8' <|| char '9'))
+  <|| CCEsc . fromOctStr <$> (char '\\' *> octDigits 1 3)
+  <|| CCEsc <$> escChar
+  <|| CCCtrl <$> (string "\\c" *> nonCtrl) -- \c non-ctrl-char
   <|| CCCharType  <$> charTypeCommon
   <|| PosixSet    <$> posixSet
   <|| CCLit       <$> ccLit
@@ -922,7 +924,7 @@ resolveOBR i (OctOrBackRef ds)
   -- may also be above 0o377, and this is not allowed in non-UTF
   -- mode. We don't take this into account in the parser.
   | n > i && length ds /= 1 && not (null octs) =
-      (i, Seq (Escape (EOct octs) : map Lit rest))
+      (i, Seq $ (Esc $ fromOctStr octs) : map Lit rest)
   | otherwise =
       (i, BackRef $ ByNumber n)
   where
@@ -979,3 +981,6 @@ charclassCase fOneof fNoneof charclass =
   case charclass of
     Oneof  items -> fOneof  items
     Noneof items -> fNoneof items
+
+fromOctStr = chr . fst . head . readOct . ("0" <>)
+fromHexStr = chr . fst . head . readHex . ("0" <>)
