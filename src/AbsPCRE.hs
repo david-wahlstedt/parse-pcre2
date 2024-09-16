@@ -20,7 +20,9 @@ data Re
   | Quant QuantifierMode Quantifier Re
   | Lit Char
   | Quoting String -- \Q <anything without \E> \E
-  | Escape Escape
+  | OctOrBackRef String -- \[1-7]{1,3}
+  | Esc  Char
+  | Ctrl Char
   | Chartype Chartype
   | Charclass Charclass
   | Anchor Anchor
@@ -34,26 +36,6 @@ data Re
   | Cond Conditional
   | Backtrack BacktrackControl
   | COut Callout
-  deriving Show
-
-
---                        Escaped characters
-
-data Escape
-  = EAlert            -- \a
-  | ECtrl Char        -- \c non-ctrl-char
-  | EEsc              -- \e
-  | EFF               -- \f
-  | ENL               -- \n
-  | ECR               -- \r
-  | ETab              -- \t
-  | EOct String       -- \0[0-7]{1,2}
-  | EOctOrBackRef String -- \[1-7]{1,3}
-  | EOctVar String    -- \o{0*[0-7]+}
-  | EUni String       -- \N{U+0*h+}
-  | EHex String       -- \xh{,2}
-  | EHexVar String    -- \x{0*h+}
-  | EChar Char    -- \x, where x [^0-9a-zA-Z]
   deriving Show
 
 
@@ -213,7 +195,8 @@ data CharclassItem
 
 data CharclassAtom
   = CCLit Char
-  | CCEsc Escape
+  | CCEsc Char
+  | CCCtrl Char
   | CCBackspace -- \b
   | CCQuoting String
   -- When a non-empty quoted string appears in a range before '-', the
@@ -286,6 +269,7 @@ data Anchor
 
 data Group
   = Capture                                    -- (...)
+  | CaptureN Int                               -- Capture with attached number
   | NonCapture                                 -- (?:...)
   | NonCaptureOpts [InternalOpt] [InternalOpt] -- (?opts:...)
   | NonCaptureReset                            -- (?|...)

@@ -10,13 +10,14 @@
 
 module ParsePCRE where
 
-import Data.Bifunctor (second)
-import Data.Char(isDigit, isAlphaNum, isLetter,
-                 isAscii, isControl, isHexDigit, isSpace, toLower)
+import Data.Char(chr, isDigit, isAlphaNum, isLetter, isAscii,
+                 isControl, isHexDigit, isOctDigit, isSpace, toLower)
 import qualified Data.HashMap.Strict as HM
+import Numeric(readOct, readHex)
 import Text.ParserCombinators.ReadP(ReadP, get, string, char, manyTill, count,
                                     satisfy, (+++), (<++), option, skipSpaces,
-                                    many, many1, sepBy, pfail, eof, readP_to_S)
+                                    many, many1, munch, sepBy, pfail, eof,
+                                    readP_to_S)
 
 import AbsPCRE
 
@@ -39,7 +40,7 @@ parsePCRE input = case readP_to_S (re <* eof) input of
 --                         Basic constructs
 
 re :: ReadP Re
-re = alt
+re = resolveOctOrBackrefs <$> alt
 
 alt :: ReadP Re
 alt = Alt <$> sepBy sequencing (char '|')
@@ -78,7 +79,9 @@ atom'
 
 quantifiable :: ReadP Re
 quantifiable
-  =   Escape    <$> escChar
+  =   OctOrBackRef <$> (string "\\"  *> octOrBackRefDigits) -- \\[1-9][0-9]{2}
+  <|| Esc <$> escChar
+  <|| Ctrl <$> (string "\\c" *> nonCtrl) -- \c non-ctrl-char
   -- a quoting is not really quantifiable, but its last character will
   -- be quanfitied, and this is handeled by the atom parser
   <|| Quoting   <$> quoting
@@ -103,25 +106,23 @@ quoting
 
 --                        Escaped characters
 
-escChar :: ReadP Escape
+escChar :: ReadP Char
 escChar
-  =   EAlert <$          string "\\a"                   -- \a
-  <|| ECtrl  <$>        (string "\\c" *> nonCtrl)       -- \c non-ctrl-char
-  <|| EEsc   <$          string "\\e"                   -- \e Esc
-  <|| EFF    <$          string "\\f"                   -- \f FF
-  <|| ENL    <$          string "\\n"                   -- \n
-  <|| ECR    <$          string "\\r"                   -- \r
-  <|| ETab   <$          string "\\t"                   -- \t
-  <|| EOct   <$>        (string "\\0" *> octDigits 0 2) -- \0[0-7]{0,2}
-  <|| EOctOrBackRef <$> (string "\\"  *> backRefDigits) -- \[1-9][0-9]{2}
-  <|| EOctVar <$> (string "\\o{" *> many1 octDigit <* char '}')  -- \o{[0-7]+}
-  <|| EUni    <$> (string "\\N{U+" *> many1 hexDigit <* char '}')-- \N{U+h+}
-  <|| EChar 'U' <$ string "\\U"                                  -- \U
-  <|| EHexVar <$> (string "\\x{" *> many1 hexDigit <* char '}')  -- \x{h+}
-  <|| EHex    <$> (string  "\\x" *> hexDigits 0 2)               -- \xh{0,2}
-  <|| EHexVar <$> (string "\\u{" *> many1 hexDigit <* char '}')  -- \u{h+}
-  <|| EHexVar <$> (string  "\\u" *> hexDigits 4 4)               -- \uhhhh
-  <|| EChar   <$> (string   "\\" *> nonAlphanumAscii) -- \ non alphanum ascii
+  =   '\a'       <$   string "\\a"                   -- \a
+  <|| '\ESC'     <$   string "\\e"                   -- \e Esc
+  <|| '\f'       <$   string "\\f"                   -- \f FF
+  <|| '\n'       <$   string "\\n"                   -- \n
+  <|| '\r'       <$   string "\\r"                   -- \r
+  <|| '\t'       <$   string "\\t"                   -- \t
+  <|| fromOctStr <$> (string "\\0" *> octDigits 0 2) -- \\0[0-7]{0,2}
+  <|| fromOctStr <$> (string "\\o{" *> many1 octDigit <* char '}') -- \o{[0-7]+}
+  <|| fromHexStr <$> (string "\\N{U+" *> many1 hexDigit <* char '}') -- \N{U+h+}
+  <|| 'U'        <$   string "\\U"                                   -- \U
+  <|| fromHexStr <$> (string "\\x{" *> many1 hexDigit <* char '}')   -- \x{h+}
+  <|| fromHexStr <$> (string "\\x"  *> hexDigits 0 2)                -- \xh{0,2}
+  <|| fromHexStr <$> (string "\\u{" *> many1 hexDigit <* char '}')   -- \u{h+}
+  <|| fromHexStr <$> (string "\\u"  *> hexDigits 4 4)                -- \uhhhh
+  <|| string   "\\" *> nonAlphanumAscii -- \ non alphanum ascii
 
 
 --                         Character types
@@ -246,14 +247,14 @@ genCatProps :: HM.HashMap String CTProperty
 genCatProps = HM.fromList $ concat
   [
     [ ("any", CTUAny) ],
-    mapSnd (CTGenProp . Other)
+    CTGenProp . Other <<$>>
     [ ("c" , C   ),   -- Other
       ("cc", Cc  ),   -- Control
       ("cf", Cf  ),   -- Format
       ("cn", Cn  ),   -- Unassigned
       ("co", Co  ),   -- Private use
       ("cs", Cs  ) ], -- , -- Surrogate
-    mapSnd (CTGenProp . Letter)
+    CTGenProp . Letter <<$>>
     [ ("l",  L   ),   -- Letter
       ("lc", Lc  ),   -- Ll, Lu, or Lt
       ("l&", Llut),   -- "L&": Ll, Lu, or Lt
@@ -262,17 +263,17 @@ genCatProps = HM.fromList $ concat
       ("lo", Lo  ),   -- Other letter
       ("lt", Lt  ),   -- Title case letter
       ("lu", Lu  ) ],   -- Upper case letter
-    mapSnd (CTGenProp . Mark)
+    CTGenProp . Mark <<$>>
     [ ("m",   M  ),   -- Mark
       ("mc",  Mc ),   -- Spacing mark
       ("me",  Me ),   -- Enclosing mark
       ("mn",  Mn ) ], -- Non-spacing mark
-    mapSnd (CTGenProp . Number)
+    CTGenProp . Number <<$>>
     [ ("n",   N  ),   -- Number
       ("nd",  Nd ),   -- Decimal number
       ("nl",  Nl ),   -- Letter number
       ("no",  No ) ], -- Other number
-    mapSnd (CTGenProp . Punctuation)
+    CTGenProp . Punctuation <<$>>
     [ ("p",   P  ),   -- Punctuation
       ("pc",  Pc ),   -- Connector punctuation
       ("pd",  Pd ),   -- Dash punctuation
@@ -281,26 +282,26 @@ genCatProps = HM.fromList $ concat
       ("pi",  Pi ),   -- Initial punctuation
       ("po",  Po ),   -- Other punctuation
       ("ps",  Ps ) ], -- Open punctuation
-    mapSnd (CTGenProp . Symbol)
+    CTGenProp . Symbol <<$>>
     [ ("s",   S  ),   -- Symbol
       ("sc",  Sc ),   -- Currency symbol
       ("sk",  Sk ),   -- Modifier symbol
       ("sm",  Sm ),   -- Mathematical symbol
       ("so",  So ) ], -- Other symbol
-    mapSnd (CTGenProp . Separator)
+    CTGenProp . Separator <<$>>
     [ ("z",   Z  ),   -- Separator
       ("zl",  Zl ),   -- Line separator
       ("zp",  Zp ),   -- Paragraph separator
       ("zs",  Zs ) ], -- Space separator
-    mapSnd CTSpecProp
+    CTSpecProp <<$>>
     [ ("xan", Xan),  -- Alphanumeric: union of properties L and N
       ("xps", Xps),  -- POSIX sp: property Z or tab, NL, VT, FF, CR
       ("xsp", Xsp),  -- Perl sp: property Z or tab, NL, VT, FF, CR
       ("xuc", Xuc),  -- Univ.-named character: one that can be ...
       ("xwd", Xwd) ] -- Perl word: property Xan or underscore
   ]
-  where mapSnd f = map (second f)
-
+  where infixl 8 <<$>>
+        (<<$>>) = fmap . fmap
 
 --                         Character classes
 
@@ -380,9 +381,10 @@ charClassAtom' :: ReadP CharclassAtom
 charClassAtom'
   =   CCQuoting   <$> postCheck (not . null) quoting
   <|| CCBackspace <$  string "\\b"
-  <|| CCEsc . EChar <$> (char '\\' *> (char '8' <|| char '9'))
-  <|| CCEsc . EOct <$> (char '\\' *> octDigits 1 3)
-  <|| CCEsc       <$> escChar
+  <|| CCEsc <$> (char '\\' *> (char '8' <|| char '9'))
+  <|| CCEsc . fromOctStr <$> (char '\\' *> octDigits 1 3)
+  <|| CCEsc <$> escChar
+  <|| CCCtrl <$> (string "\\c" *> nonCtrl) -- \c non-ctrl-char
   <|| CCCharType  <$> charTypeCommon
   <|| PosixSet    <$> posixSet
   <|| CCLit       <$> ccLit
@@ -468,6 +470,7 @@ anchor
 
 --                         Groups
 
+-- TODO: deeply nested groups are terribly inefficient!
 group :: ReadP Re
 group
   =   atomicNonCapture
@@ -641,7 +644,7 @@ refByNumber :: ReadP Int
 refByNumber
   =   string  "\\g{" *> positive <* char '}'
   <|| string  "\\g"  *> positive
-  -- \ digit is handled by EOctOrBackRef
+  -- \\[1-9][0-9]{0,2} is handled by OctOrBackRef
 
 -- Subroutine references (possibly recursive)
 subCall :: ReadP SubroutineCall
@@ -816,17 +819,9 @@ groupNameChar :: Bool -> ReadP Char
 groupNameChar isFirst
   = satisfy (\c -> not isFirst && isDigit c || isLetter c || c == '_')
 
--- Parses 1, 2, or 3 digits starting with a positive digit
--- In a future version when we'll keep track on the capture groups in
--- scope, we will parse this either as a backreference, if valid, in
--- decimal, or consume up to 3 octal digits, or a many as available in
--- the input, and treat as an escaped character. If there is a valid
--- group number which is a proper prefix of an octal sequence, the
--- octal sequence will be consumed instead: this is the behaviour of
--- PCRE2 (v10.45).
-backRefDigits :: ReadP String
-backRefDigits
-  = (:) <$> posDigit <*> digits 0 2
+-- see resolveOctOrBackrefs
+octOrBackRefDigits :: ReadP String
+octOrBackRefDigits = (:) <$> posDigit <*> munch isDigit
 
 -- posDigit is a parser for a positive digit [1-9]
 posDigit :: ReadP Char
@@ -903,6 +898,76 @@ oneStr = oneOf . map string
 oneOf :: [ReadP a] -> ReadP a
 oneOf = foldr1 (<||)
 
+------------------------------------------------------------------------------
+--                      Syntax rebuild helpers
+
+-- Traverse the expression, keeping track of the highest group we've
+-- encountered so far, from left to right, in an in-order traversal
+-- manner. The OctOrBackRef ds ocurrences are then replaced by either
+-- BackRef or EOct followed by possible trailing non octal digit
+-- literals, dependent on whether the highest capture group count i so
+-- far: length ds == 1 || i > read ds -> BackRef; otherwise Escape EOct.
+resolveOctOrBackrefs e = snd $ resolveOBR 0 e
+
+resolveOBR :: Int -> Re -> (Int, Re)
+resolveOBR i (Group Capture e) =
+  Group (CaptureN i') <$> resolveOBR i' e
+  where i' = i + 1
+resolveOBR i (Group NonCaptureReset (Alt es)) =
+  let ies = map (resolveOBR i) es -- all alternatives start with i
+      (is, es') = unzip ies
+  in (maximum is, Group NonCaptureReset (Alt es'))
+resolveOBR i (OctOrBackRef ds)
+  -- The octOrBackRefDigits parser consumes as many digits ds as
+  -- available. If the decimal number n, that ds encode, is above the
+  -- highest capture group to the left, and ds has a non-empty octal
+  -- prefix, ds is considered as an octal escape of length at most 3,
+  -- followed by the rest of the digits as literals. In all other
+  -- cases ds is considered a backreference, and we don't considere
+  -- here whether the reference is too large or not. The octal
+  -- reference may also be above 0o377, and this is not allowed in
+  -- non-UTF mode. We don't take this into account in the parser.
+  | n > i && length ds /= 1 && not (null octs) =
+      (i, Seq $ (Esc $ fromOctStr octs) : map Lit rest)
+  | otherwise =
+      (i, BackRef $ ByNumber n)
+  where
+    n = read ds :: Int
+    (octs, rest) = span isOctDigit ds
+resolveOBR i (Alt es) =
+    let (i', es') = resolveOBRs i es
+    in (i', Alt es')
+resolveOBR i (Seq es) =
+    let (i', es') = resolveOBRs i es
+    in (i', Seq es')
+resolveOBR i (Quant m q e) =
+  Quant m q <$> resolveOBR i e
+resolveOBR i (Group g e) =
+  Group g <$> resolveOBR i e
+resolveOBR i (ScriptRun m e) =
+  ScriptRun m <$> resolveOBR i e
+resolveOBR i (Look d m e) = Look d m <$> resolveOBR i e
+resolveOBR i (Cond c) = Cond <$> resolveOBRCondl i c
+resolveOBR i e = (i,e)
+
+resolveOBRs :: Int -> [Re] -> (Int, [Re])
+resolveOBRs i [] = (i, [])
+resolveOBRs i (e:es) =
+    let (i' , e' ) = resolveOBR i e
+        (i'', es') = resolveOBRs i' es
+    in (i'', e' : es')
+
+resolveOBRCondl i (CondYes c e) =
+    let (i' , c') = resolveOBRCond i c
+    in CondYes c' <$> resolveOBR i' e
+resolveOBRCondl i (CondYesNo c e1 e2) =
+    let (i' , c') = resolveOBRCond i c
+        (i'', e1') = resolveOBR i' e1
+    in CondYesNo c' e1' <$> resolveOBR i'' e2
+
+resolveOBRCond i (Assert mc dir m e) = Assert mc dir m <$> resolveOBR i e
+resolveOBRCond i cond = (i, cond)
+
 
 ------------------------------------------------------------------------------
 --                           Misc helpers
@@ -920,3 +985,6 @@ charclassCase fOneof fNoneof charclass =
   case charclass of
     Oneof  items -> fOneof  items
     Noneof items -> fNoneof items
+
+fromOctStr = chr . fst . head . readOct . ("0" <>)
+fromHexStr = chr . fst . head . readHex . ("0" <>)
