@@ -911,8 +911,12 @@ resolveOctOrBackrefs e = snd $ resolveOBR 0 e
 
 resolveOBR :: Int -> Re -> (Int, Re)
 resolveOBR i (Group Capture e) =
-  Group Capture <$> resolveOBR (i + 1) e
--- TODO: handle Group NonCaptureReset
+  Group (CaptureN i') <$> resolveOBR i' e
+  where i' = i + 1
+resolveOBR i (Group NonCaptureReset (Alt es)) =
+  let ies = map (resolveOBR i) es -- all alternatives start with i
+      (is, es') = unzip ies
+  in (maximum is, Group NonCaptureReset (Alt es'))
 resolveOBR i (OctOrBackRef ds)
   -- The octOrBackRefDigits parser consumes as many digits ds as
   -- available. If the decimal number n, that ds encode, is above the
