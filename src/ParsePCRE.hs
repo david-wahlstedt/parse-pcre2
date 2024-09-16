@@ -16,7 +16,7 @@ import qualified Data.HashMap.Strict as HM
 import Numeric(readOct, readHex)
 import Text.ParserCombinators.ReadP(ReadP, get, string, char, manyTill, count,
                                     satisfy, (+++), (<++), option, skipSpaces,
-                                    many, many1, munch, sepBy, pfail, eof,
+                                    many, many1, munch, sepBy1, pfail, eof,
                                     readP_to_S)
 
 import AbsPCRE
@@ -43,7 +43,7 @@ re :: ReadP Re
 re = resolveOctOrBackrefs <$> alt
 
 alt :: ReadP Re
-alt = Alt <$> sepBy sequencing (char '|')
+alt = Alt <$> sepBy1 sequencing (char '|')
 
 sequencing :: ReadP Re
 sequencing = Seq <$> (option "" comment *> many atom)
