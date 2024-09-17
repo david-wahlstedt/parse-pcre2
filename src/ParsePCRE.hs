@@ -10,8 +10,8 @@
 
 module ParsePCRE where
 
-import Data.Char(chr, isDigit, isAlphaNum, isLetter, isAscii,
-                 isControl, isHexDigit, isOctDigit, isSpace, toLower)
+import Data.Char(chr, isDigit, isAlphaNum, isLetter, isAscii, isControl,
+                 isHexDigit, isOctDigit, isPrint, isSpace, toLower)
 import qualified Data.HashMap.Strict as HM
 import Numeric(readOct, readHex)
 import Text.ParserCombinators.ReadP(ReadP, get, string, char, manyTill, count,
@@ -81,7 +81,7 @@ quantifiable :: ReadP Re
 quantifiable
   =   OctOrBackRef <$> (string "\\"  *> octOrBackRefDigits) -- \\[1-9][0-9]{2}
   <|| Esc <$> escChar
-  <|| Ctrl <$> (string "\\c" *> nonCtrl) -- \c non-ctrl-char
+  <|| Ctrl <$> (string "\\c" *> printableAscii) -- \c x, printable ascii
   -- a quoting is not really quantifiable, but its last character will
   -- be quanfitied, and this is handeled by the atom parser
   <|| Quoting   <$> quoting
@@ -384,7 +384,7 @@ charClassAtom'
   <|| CCEsc <$> (char '\\' *> (char '8' <|| char '9'))
   <|| CCEsc . fromOctStr <$> (char '\\' *> octDigits 1 3)
   <|| CCEsc <$> escChar
-  <|| CCCtrl <$> (string "\\c" *> nonCtrl) -- \c non-ctrl-char
+  <|| CCCtrl <$> (string "\\c" *> printableAscii) -- \c x, printable ascii
   <|| CCCharType  <$> charTypeCommon
   <|| PosixSet    <$> posixSet
   <|| CCLit       <$> ccLit
@@ -809,8 +809,8 @@ topLevelSpecials = ['^', '\\', '|', '(', ')', '[', '$', '+', '*', '?', '.']
 ------------------------------------------------------------------------------
 --                          Parser helpers
 
-nonCtrl :: ReadP Char
-nonCtrl = satisfy (not . isControl)
+printableAscii :: ReadP Char
+printableAscii = satisfy (\c -> isAscii c && isPrint c)
 
 nonAlphanumAscii :: ReadP Char
 nonAlphanumAscii = satisfy (\c -> not (isAlphaNum c && isAscii c))
