@@ -329,7 +329,7 @@ data InternalOpt
   | IngoreWS           -- (?x) ignore white space except in classes or \Q...\E
   | IngoreWSClasses    -- (?xx) as (?x) but also ignore space and tab in class
   | UnsetImnrsx        -- (?^) unset imnrsx options
-  deriving Show
+  deriving (Eq, Show)
 
 
 --                            Lookaround

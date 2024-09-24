@@ -10,14 +10,12 @@
 
 module ParsePCRE where
 
+import Control.Monad.State
 import Data.Char(chr, isDigit, isAlphaNum, isLetter, isAscii, isControl,
                  isHexDigit, isOctDigit, isPrint, isSpace, toLower)
 import qualified Data.HashMap.Strict as HM
 import Numeric(readOct, readHex)
-import Text.ParserCombinators.ReadP(ReadP, get, string, char, manyTill, count,
-                                    satisfy, (+++), (<++), option, skipSpaces,
-                                    many, many1, munch, sepBy1, pfail, eof,
-                                    readP_to_S)
+import qualified Text.ParserCombinators.ReadP as R
 
 import AbsPCRE
 
@@ -29,29 +27,55 @@ import ParseHelpScriptName ( namesAndConsScriptName )
 
 
 ------------------------------------------------------------------------------
+--                     Parser monad transformer
+
+data Env = Options{
+  -- The following are, so far, the only options we are aware of that
+  -- affect how the parser behaves
+  ignoreWS :: Bool, -- (?x) ignore unescaped whitespace+treat #.*\n as comments
+  pcre2ExtendedMore :: Bool, -- (?xx) like x, but also ign. sp. in char classes
+  noAutoCapture :: Bool -- (?n)
+  }
+  deriving Show
+
+type Parser a = StateT [Env] R.ReadP a
+
+runParser :: Env -> String -> [(Re, String)]
+runParser initialEnv input =
+  -- Start with the initial environment at the top of the stack
+  let initialState = [initialEnv]
+  in R.readP_to_S (evalStateT (re <* eof) initialState) input
+
+
+------------------------------------------------------------------------------
 --                        Parser entrypoint
 
 parsePCRE :: String -> Maybe Re
-parsePCRE input = case readP_to_S (re <* eof) input of
+parsePCRE input =
+  case runParser initialEnv input of
     (result, "") : _ -> Just result
     _                -> Nothing
+  where
+    initialEnv = Options
+      { ignoreWS   = False
+      }
 
 
 --                         Basic constructs
 
-re :: ReadP Re
+re :: Parser Re
 re = resolveOctOrBackrefs <$> alt
 
-alt :: ReadP Re
+alt :: Parser Re
 alt = Alt <$> sepBy1 sequencing (char '|')
 
-sequencing :: ReadP Re
+sequencing :: Parser Re
 sequencing = Seq <$> (option "" comment *> many atom)
 
-atom :: ReadP Re
+atom :: Parser Re
 atom = atom' <* option "" comment
 
-atom' :: ReadP Re
+atom' :: Parser Re
 atom'
   =   Anchor    <$> anchor
   <|| (\e q m -> quantify m e q) <$> quantifiable <*> quantifier <*> quantMode
@@ -77,7 +101,7 @@ atom'
         splitQuoting (Alt [e']) = splitQuoting e'
         splitQuoting _ = Nothing
 
-quantifiable :: ReadP Re
+quantifiable :: Parser Re
 quantifiable
   =   OctOrBackRef <$> (string "\\"  *> octOrBackRefDigits) -- \\[1-9][0-9]{2}
   <|| Esc <$> escChar
@@ -98,15 +122,15 @@ quantifiable
 
 --                               Quoting
 
-quoting :: ReadP String
+quoting :: Parser String
 quoting
   =   string "\\Q" *> getUntil "\\E"
-  <|| string "\\Q" *> many get <* eof
+  <|| string "\\Q" *> many anyChar <* eof
 
 
 --                        Escaped characters
 
-escChar :: ReadP Char
+escChar :: Parser Char
 escChar
   =   '\a'       <$   string "\\a"                   -- \a
   <|| '\ESC'     <$   string "\\e"                   -- \e Esc
@@ -127,12 +151,12 @@ escChar
 
 --                         Character types
 
-charType :: ReadP Chartype
+charType :: Parser Chartype
 charType
   =   charTypeCommon
   <|| CTAny <$ char '.'
 
-charTypeCommon :: ReadP Chartype
+charTypeCommon :: Parser Chartype
 charTypeCommon
   =   CTCodeUnit   <$ string "\\C"
   <|| CTDigit      <$ string "\\d"
@@ -151,7 +175,7 @@ charTypeCommon
   <|| ctProperty
 
 -- \p and \P character type properties
-ctProperty :: ReadP Chartype
+ctProperty :: Parser Chartype
 ctProperty
   =   CTProp  <$> ((string "\\P{^" <|| string "\\p{") *> ctBody)
   <|| CTNProp <$> ((string "\\p{^" <|| string "\\P{") *> ctBody)
@@ -159,15 +183,15 @@ ctProperty
   <|| CTNProp <$> (string "\\P" *> singleCharGeneral)
 
 -- Single character general category properties C, L, N, M, P, S, and Z.
-singleCharGeneral :: ReadP CTProperty
+singleCharGeneral :: Parser CTProperty
 singleCharGeneral = do
-  c <- get
+  c <- anyChar
   genCatProp [toLower c]
 
 -- Everything inside \p{ } or \P{ } is converted into lower case and
 -- stripped from ascii range spaces, hyphens and underscores.
 
-ctBody :: ReadP CTProperty
+ctBody :: Parser CTProperty
 ctBody = do
   body <- getUntil "}"
   case break (`elem` [':','=']) $ normalize body of
@@ -198,22 +222,22 @@ ctBody = do
 
 -- "General category properties for \p and \P" and
 -- "PCRE2 special category properties for \p and \P"
-genCatProp :: String -> ReadP CTProperty
+genCatProp :: String -> Parser CTProperty
 genCatProp s = maybe pfail pure $ HM.lookup s genCatProps
 
 -- namesAndConsScriptName is gnerated from ../pcre2test/pcre2test-LS.txt
-scriptName :: String -> ReadP ScriptName
+scriptName :: String -> Parser ScriptName
 scriptName s = maybe pfail pure $ HM.lookup s scriptNames
 scriptNames :: HM.HashMap String ScriptName
 scriptNames = HM.fromList $ flatNamesAndCons namesAndConsScriptName
 
 -- namesAndConsBinProp is generated from ../pcre2test/pcre2test-LP.txt
-binProp :: String -> ReadP BinProp
+binProp :: String -> Parser BinProp
 binProp s = maybe pfail pure $ HM.lookup s binProps
 binProps :: HM.HashMap String BinProp
 binProps = HM.fromList $ flatNamesAndCons namesAndConsBinProp
 
-bidi :: String -> ReadP CTBidiClass
+bidi :: String -> Parser CTBidiClass
 bidi s = maybe pfail pure $ lookup s bidiClasses
 
 bidiClasses :: [(String, CTBidiClass)]
@@ -305,7 +329,7 @@ genCatProps = HM.fromList $ concat
 
 --                         Character classes
 
-charClass :: ReadP Charclass
+charClass :: Parser Charclass
 -- special cases for emtpy classes: should be configurable
 charClass
   =   postCheck checkRanges $
@@ -355,7 +379,7 @@ charClass
     noEmptyQuoting (CCAtom (CCQuoting "")) = False
     noEmptyQuoting _ = True
 
-charClassBody :: ReadP [CharclassItem]
+charClassBody :: Parser [CharclassItem]
 charClassBody
   =   (:) . Range (CCLit ']') <$>
        (optEmptyQuoting <* stripNullQuotes "]-" *> charClassAtom) <*>
@@ -364,20 +388,20 @@ charClassBody
        (optEmptyQuoting <* char ']' *> many charClassItem)
   <|| many charClassItem
 
-charClassRange :: ReadP CharclassItem
+charClassRange :: Parser CharclassItem
 charClassRange
   = Range <$>
     charClassAtom <*> ((optEmptyQuoting <* char '-') *> charClassAtom)
 
-charClassItem :: ReadP CharclassItem
+charClassItem :: Parser CharclassItem
 charClassItem
   =   charClassRange
   <|| CCAtom <$> charClassAtom
 
-charClassAtom :: ReadP CharclassAtom
+charClassAtom :: Parser CharclassAtom
 charClassAtom = optEmptyQuoting *> charClassAtom'
 
-charClassAtom' :: ReadP CharclassAtom
+charClassAtom' :: Parser CharclassAtom
 charClassAtom'
   =   CCQuoting   <$> postCheck (not . null) quoting
   <|| CCBackspace <$  string "\\b"
@@ -389,12 +413,12 @@ charClassAtom'
   <|| PosixSet    <$> posixSet
   <|| CCLit       <$> ccLit
 
-posixSet :: ReadP PosixSet
+posixSet :: Parser PosixSet
 posixSet
   =   NegSet <$> (string "[:^" *> setName <* string ":]")
   <|| PosSet <$> (string "[:"  *> setName <* string ":]")
 
-setName :: ReadP SetName
+setName :: Parser SetName
 setName
   =   SetAlnum  <$ string "alnum"  -- alphanumeric
   <|| SetAlpha  <$ string "alpha"  -- alphabetic
@@ -411,7 +435,7 @@ setName
   <|| SetWord   <$ string "word"   -- same as \w
   <|| SetXdigit <$ string "xdigit" -- hexadecimal digit
 
-ccLit :: ReadP Char
+ccLit :: Parser Char
 ccLit = nonSpecial ccSpecials
 
 -- Set of special characters that need to be escaped inside character classes
@@ -421,18 +445,16 @@ ccSpecials = ['\\', ']']
 
 --                           Quantifiers
 
-quantifier :: ReadP Quantifier
+quantifier :: Parser Quantifier
 quantifier = option "" comment *> quantifier'
 
-quantifier' :: ReadP Quantifier
+quantifier' :: Parser Quantifier
 quantifier'
   =   Option <$ char '?'
   <|| Many   <$ char '*'
   <|| Many1  <$ char '+'
   <|| Rep    <$>
        (char '{' *> skipSpaces *> natural <* skipSpaces <* char '}')
-  -- TODO: if comments are encountered within { } the whole expression
-  -- is just sequence of literals, but without the comments
   <|| RepMin <$>
        (char '{' *> skipSpaces *> natural <* skipSpaces <*
         char ',' <* skipSpaces <* char '}')
@@ -443,10 +465,10 @@ quantifier'
        (char '{' *> skipSpaces *> natural <* skipSpaces <* char ',') <*>
         (skipSpaces *> natural <* skipSpaces <* char '}')
 
-quantMode :: ReadP QuantifierMode
+quantMode :: Parser QuantifierMode
 quantMode = option "" comment *> quantMode'
 
-quantMode' :: ReadP QuantifierMode
+quantMode' :: Parser QuantifierMode
 quantMode'
   =   Possessive <$ char '+'
   <|| Lazy <$ char '?'
@@ -454,7 +476,7 @@ quantMode'
 
 --                         Anchors
 
-anchor :: ReadP Anchor
+anchor :: Parser Anchor
 anchor
   =   StartOfLine          <$ char   '^'
   <|| EndOfLine            <$ char   '$'
@@ -470,24 +492,24 @@ anchor
 
 --                         Groups
 
--- TODO: deeply nested groups are terribly inefficient!
-group :: ReadP Re
+group :: Parser Re
 group
-  =   atomicNonCapture
+  = localST $
+      atomicNonCapture
   <|| nonCapture
   <|| nonCaptureOpts
   <|| namedCapture
   <|| nonCaptureReset
   <|| capture
 
-capture :: ReadP Re
+capture :: Parser Re
 capture = Group Capture <$> (char '(' *> alt <* char ')')
 
-nonCapture :: ReadP Re
+nonCapture :: Parser Re
 nonCapture = Group NonCapture <$>  (string "(?:" *> alt <* char ')')
 
 -- option setting in non-capture group (?OptsOn-OptsOff:...)
-nonCaptureOpts :: ReadP Re
+nonCaptureOpts :: Parser Re
 nonCaptureOpts
   = mkGroup <$>
     (string "(?" *> (optionsOnOff <* char ':')) <*> alt <* char ')'
@@ -495,16 +517,16 @@ nonCaptureOpts
     mkGroup :: ([InternalOpt], [InternalOpt]) -> Re -> Re
     mkGroup (ons, offs) = Group (NonCaptureOpts ons offs)
 
-nonCaptureReset :: ReadP Re
+nonCaptureReset :: Parser Re
 nonCaptureReset
   = Group NonCaptureReset <$> (string "(?|" *> alt <* char ')')
 
-atomicNonCapture :: ReadP Re
+atomicNonCapture :: Parser Re
 atomicNonCapture
   = Group AtomicNonCapture <$
     oneStr ["(?>", "(*atomic:"] <*> alt <* char ')'
 
-namedCapture :: ReadP Re
+namedCapture :: Parser Re
 namedCapture
   =   mkNamed <$>
        (string "(?<" *> groupName) <*> (char '>' *> alt <* char ')')
@@ -514,38 +536,43 @@ namedCapture
        (string "(?P<" *> groupName) <*> (char '>' *> alt <* char ')' )
   where mkNamed name = Group (NamedCapture name)
 
-groupName :: ReadP String
+groupName :: Parser String
 groupName = (:) <$> groupNameChar True <*> many (groupNameChar False)
 
 --                             Comments
 
-comment :: ReadP String
+comment :: Parser String
 comment
   =   string "(?#" *> getUntil ")"
   <|| emptyQuoting
 
-emptyQuoting :: ReadP String
+emptyQuoting :: Parser String
 emptyQuoting
   =   string "\\Q\\E" -- Ignore empty quotings
   <|| string "\\E"    -- An isolated \E that is not preceded by \Q is ignored.
 
 -- Strips away zero or more consecutive empty quotings
-optEmptyQuoting :: ReadP String
+optEmptyQuoting :: Parser String
 optEmptyQuoting = "" <$ many emptyQuoting
 
 --                          Option setting
 
-optionSetting :: ReadP OptionSetting
+optionSetting :: Parser OptionSetting
 optionSetting
   =   StartOpt <$> (string "(*" *> startOpt <* char ')')
-  <|| uncurry InternalOpts <$> (string "(?" *> optionsOnOff <* char ')')
+  <|| internalOpts
 
-optionsOnOff :: ReadP ([InternalOpt], [InternalOpt])
+internalOpts = do
+  (onOpts, offOpts) <- string "(?" *> optionsOnOff <* char ')'
+  modify (applyOptions onOpts offOpts)
+  pure (InternalOpts onOpts offOpts)
+
+optionsOnOff :: Parser ([InternalOpt], [InternalOpt])
 optionsOnOff
   =   (,) <$> (many internalOpt <* char '-') <*> many internalOpt
   <|| (\opts -> (opts, [])) <$> many internalOpt
 
-startOpt :: ReadP StartOpt
+startOpt :: Parser StartOpt
 startOpt
   =   LimitDepth <$ string "LIMIT_DEPTH="     <*> natural
   <|| LimitDepth <$ string "LIMIT_RECURSION=" <*> natural
@@ -573,7 +600,7 @@ startOpt
   <|| BsrAnycrlf <$ string "BSR_ANYCRLF"
   <|| BsrUnicode <$ string "BSR_UNICODE"
 
-internalOpt :: ReadP InternalOpt
+internalOpt :: Parser InternalOpt
 internalOpt
   =   CaseLess           <$ string  "i"
   <|| AllowDupGrp        <$ string  "J"
@@ -595,7 +622,7 @@ internalOpt
 
 --                            Lookaround
 
-lookAround :: ReadP Re
+lookAround :: Parser Re
 lookAround
   =   Look Ahead Pos <$
        oneStr ["(?=", "(*pla:", "(*positive_lookahead:"]
@@ -619,13 +646,13 @@ lookAround
 
 --               Backreferences and subroutine calls
 
-backRef :: ReadP BackReference
+backRef :: Parser BackReference
 backRef
   =   ByName   <$> refByName
   <|| Relative <$> refRelative
   <|| ByNumber <$> refByNumber
 
-refByName :: ReadP String
+refByName :: Parser String
 refByName
   =   string "(?P=" *> groupName <* char  ')'
   <|| string "\\k{" *> groupName <* char  '}'
@@ -633,21 +660,21 @@ refByName
   <|| string "\\k'" *> groupName <* char '\''
   <|| string "\\k<" *> groupName <* char  '>'
 
-refRelative :: ReadP Int
+refRelative :: Parser Int
 refRelative
   =   string "\\g{+" *> positive <* char '}'
   <|| negate <$> (string "\\g{-" *> positive <* char '}')
   <|| string "\\g+" *> positive
   <|| negate <$> (string "\\g-"  *> positive)
 
-refByNumber :: ReadP Int
+refByNumber :: Parser Int
 refByNumber
   =   string  "\\g{" *> positive <* char '}'
   <|| string  "\\g"  *> positive
   -- \\[1-9][0-9]{0,2} is handled by OctOrBackRef
 
 -- Subroutine references (possibly recursive)
-subCall :: ReadP SubroutineCall
+subCall :: Parser SubroutineCall
 subCall
   =   (Recurse <$ string "(?R)" )
   <|| CallAbs <$>
@@ -680,7 +707,7 @@ subCall
 
 --                           Conditionals
 
-conditional :: ReadP Conditional
+conditional :: Parser Conditional
 conditional
   -- sequencing is the category below alt, so we don't get '|' wrong:
   =   CondYesNo <$>
@@ -689,7 +716,7 @@ conditional
   <|| CondYes <$>
        (string "(?(" *> condition <* char ')') <*> (sequencing <* char ')')
 
-condition :: ReadP Condition
+condition :: Parser Condition
 condition
   =   AbsRef <$> positive
   <|| RelRef <$> (char '+' *> positive)
@@ -735,7 +762,7 @@ condition
 --  (*atomic_script_run:...)    ) atomic script run
 --  (*asr:...)                  )
 
-scriptRun :: ReadP Re
+scriptRun :: Parser Re
 scriptRun
   =   ScriptRun NonAtomic <$
        (string "(*script_run:" <|| string "(*sr:") <*> alt <* char ')'
@@ -745,7 +772,7 @@ scriptRun
 
 --                       Backtracking control
 
-backtrackControl :: ReadP BacktrackControl
+backtrackControl :: Parser BacktrackControl
 backtrackControl
   =   Accept <$> (string "(*ACCEPT" *> optName <* char ')')
   <|| Fail   <$> ((string "(*FAIL" <|| string "(*F") *> optName <* char ')')
@@ -756,24 +783,24 @@ backtrackControl
   <|| Skip <$> (string "(*SKIP" *> optName <* char ')')
   <|| Then <$> (string "(*THEN" *> optName <* char ')')
   where optName = option Nothing (Just <$> (char ':' *> many1 nameChar))
-                  +++ (Nothing <$ char ':')
+                  <||> (Nothing <$ char ':')
         nameChar = satisfy (/=')')
 
 
 --                             Callouts
 
-callout :: ReadP Callout
+callout :: Parser Callout
 callout
   = string "(?" *> calloutBody <* string ")"
 
-calloutBody :: ReadP Callout
+calloutBody :: Parser Callout
 calloutBody
   =   (CalloutN <$> (string "C" *> natural)) -- (?Cn) with numerical data n
   <|| (CalloutS <$> (string "C" *> coutStr)) -- (?C"text") with string data
   <|| (Callout  <$  string "C")              -- (?C) (assumed number 0)
 
 -- delimiters: ` ' " ^ % # $ and { }
-coutStr :: ReadP String
+coutStr :: Parser String
 coutStr
   =   coutStr_ "`"   "`"
   <|| coutStr_ "'"   "'"
@@ -785,7 +812,7 @@ coutStr
 
 -- The close delimiter is escaped by doubling it,
 -- e.g. (?C{te{x}}t}) to escape the '}'.
-coutStr_ :: String -> String -> ReadP String
+coutStr_ :: String -> String -> Parser String
 coutStr_ open close
   = (\ss s -> concatMap (++ close) ss ++ s) <$>
     (string open *> many (getUntil closeTwice))
@@ -795,10 +822,10 @@ coutStr_ open close
 
 --                             Literals
 
-literal :: ReadP Re
+literal :: Parser Re
 literal = Lit <$> nonSpecial topLevelSpecials
 
-nonSpecial :: Foldable t => t Char -> ReadP Char
+nonSpecial :: Foldable t => t Char -> Parser Char
 nonSpecial specials = satisfy (not . flip elem specials)
 
 -- Needs to be escaped on top level (outside character classes):
@@ -807,80 +834,7 @@ topLevelSpecials = ['^', '\\', '|', '(', ')', '[', '$', '+', '*', '?', '.']
 
 
 ------------------------------------------------------------------------------
---                          Parser helpers
-
-printableAscii :: ReadP Char
-printableAscii = satisfy (\c -> isAscii c && isPrint c)
-
-nonAlphanumAscii :: ReadP Char
-nonAlphanumAscii = satisfy (\c -> not (isAlphaNum c && isAscii c))
-
-groupNameChar :: Bool -> ReadP Char
-groupNameChar isFirst
-  = satisfy (\c -> not isFirst && isDigit c || isLetter c || c == '_')
-
--- see resolveOctOrBackrefs
-octOrBackRefDigits :: ReadP String
-octOrBackRefDigits = (:) <$> posDigit <*> munch isDigit
-
--- posDigit is a parser for a positive digit [1-9]
-posDigit :: ReadP Char
-posDigit = satisfy (\c -> '1' <= c && c <= '9')
-
--- digit is a parser for a digit [0-9]
-digit :: ReadP Char
-digit = satisfy isDigit
-
--- Parses lo, lo+1, ..., hi decimal digits, trying the longest match first
-digits :: Int -> Int -> ReadP String
-digits lo hi | lo == hi = count lo digit
-             | lo  < hi = count hi digit <|| digits lo (hi - 1)
-             | otherwise = error $ "invalid range: " ++ show (lo, hi)
-
-octDigit :: ReadP Char
-octDigit = satisfy (`elem` ['0'..'7'])
-
--- Parses lo, lo+1, ..., hi octal digits, trying the longest match first
-octDigits :: Int -> Int -> ReadP String
-octDigits lo hi | lo == hi = count lo octDigit
-                | lo  < hi = count hi octDigit <|| octDigits lo (hi - 1)
-                | otherwise = error $ "invalid range: " ++ show (lo, hi)
-
--- hexDigit is a parser for a single hex digit
-hexDigit :: ReadP Char
-hexDigit = satisfy isHexDigit
-
--- Parses lo, lo+1, ..., hi hex digits, trying the longest match first
-hexDigits :: Int -> Int -> ReadP String
-hexDigits lo hi | lo == hi = count lo hexDigit
-                | lo  < hi = count hi hexDigit <|| hexDigits lo (hi - 1)
-                | otherwise = error $ "invalid range: " ++ show (lo, hi)
-
-natural :: ReadP Int
-natural = read <$> many1 digit
-
-positive :: ReadP Int
-positive = postCheck (> 0) natural
-
--- like string, but strips away empty quotes if they occur between the
--- characters
-stripNullQuotes :: String -> ReadP String
-stripNullQuotes [] = pure ""
-stripNullQuotes (c : cs) = (:) <$>
-  char c <*> (optEmptyQuoting *> stripNullQuotes cs)
-
--- Get all characters cs until s appears a substring, consume s and
--- return cs
-getUntil :: String -> ReadP String
-getUntil s = manyTill get (string s)
-
--- Parse with p, but succeed and comsume input only if isOk p holds.
-postCheck :: (a -> Bool) -> ReadP a -> ReadP a
-postCheck isOk p = do
-  result <- p
-  if isOk result
-    then pure result
-    else pfail
+--                 Lifted ReadP parser combinators
 
 -- For efficiency, it is crucial that this operator discards its
 -- second argument if the first succeeds: for instance,
@@ -888,14 +842,155 @@ postCheck isOk p = do
 -- slower using only +++ (or <|> for that sake)! This has to do with
 -- the ambiguous grammars, e.g., \x, \xd, \xdd are all valid. This
 -- implies also that the order of the alternatives does matter.
-infixr 3 <||
-(<||) :: ReadP a -> ReadP a -> ReadP a
-(<||) = (<++)
+infixl 3 <||
+(<||) :: Parser a -> Parser a -> Parser a
+p1 <|| p2 = StateT $ \s ->
+  runStateT p1 s <++ runStateT p2 s
+  where (<++) = (R.<++)
 
-oneStr :: [String] -> ReadP String
+infixl 3 <||>
+(<||>) :: Parser a -> Parser a -> Parser a
+p1 <||> p2 = StateT $ \s ->
+  runStateT p1 s +++ runStateT p2 s
+  where (+++) = (R.+++)
+
+-- to distinguich it from State's get, we name it anyChar
+anyChar :: Parser Char
+anyChar = lift R.get
+
+string :: String -> Parser String
+string = lift . R.string
+
+char :: Char -> Parser Char
+char = lift . R.char
+
+manyTill :: Parser a -> Parser end -> Parser [a]
+manyTill p end = scan
+  where
+    scan = (end >> return []) <|| (:) <$> p <*> scan
+
+count :: Int -> Parser a -> Parser [a]
+count n p = lift (R.count n (evalStateT p []))
+
+satisfy :: (Char -> Bool) -> Parser Char
+satisfy = lift . R.satisfy
+
+munch :: (Char -> Bool) -> Parser String
+munch = lift . R.munch
+
+option :: a -> Parser a -> Parser a
+option x p = StateT $ \s ->
+  runStateT p s R.+++ return (x, s)
+
+skipSpaces :: Parser ()
+skipSpaces = lift R.skipSpaces
+
+many1 :: Parser a -> Parser [a]
+many1 p = StateT $ \s -> do
+  (a, s') <- runStateT p s
+  (as, finalState) <- runStateT (many p) s'
+  return (a : as, finalState)
+
+many :: Parser a -> Parser [a]
+many p = StateT $ \s -> return ([], s) R.+++ runStateT (many1 p) s
+
+sepBy1 :: Parser a -> Parser sep -> Parser [a]
+sepBy1 p sep = StateT $ \s -> do
+  (firstItem, s1) <- runStateT p s
+  (restItems, finalState) <- runStateT (many (sep >> p)) s1
+  return (firstItem : restItems, finalState)
+
+sepBy :: Parser a -> Parser sep -> Parser [a]
+sepBy p sep = StateT $ \s ->
+  runStateT (return []) s R.+++ runStateT (sepBy1 p sep) s
+
+pfail :: Parser a
+pfail = lift R.pfail
+
+eof :: Parser ()
+eof = lift R.eof
+
+
+------------------------------------------------------------------------------
+--                          Parser helpers
+
+printableAscii :: Parser Char
+printableAscii = satisfy (\c -> isAscii c && isPrint c)
+
+nonAlphanumAscii :: Parser Char
+nonAlphanumAscii = satisfy (\c -> not (isAlphaNum c && isAscii c))
+
+groupNameChar :: Bool -> Parser Char
+groupNameChar isFirst
+  = satisfy (\c -> not isFirst && isDigit c || isLetter c || c == '_')
+
+-- see resolveOctOrBackrefs
+octOrBackRefDigits :: Parser String
+octOrBackRefDigits = (:) <$> posDigit <*> munch isDigit
+
+-- posDigit is a parser for a positive digit [1-9]
+posDigit :: Parser Char
+posDigit = satisfy (\c -> '1' <= c && c <= '9')
+
+-- digit is a parser for a digit [0-9]
+digit :: Parser Char
+digit = satisfy isDigit
+
+-- Parses lo, lo+1, ..., hi decimal digits, trying the longest match first
+digits :: Int -> Int -> Parser String
+digits lo hi | lo == hi = count lo digit
+             | lo  < hi = count hi digit <|| digits lo (hi - 1)
+             | otherwise = error $ "invalid range: " ++ show (lo, hi)
+
+octDigit :: Parser Char
+octDigit = satisfy (`elem` ['0'..'7'])
+
+-- Parses lo, lo+1, ..., hi octal digits, trying the longest match first
+octDigits :: Int -> Int -> Parser String
+octDigits lo hi | lo == hi = count lo octDigit
+                | lo  < hi = count hi octDigit <|| octDigits lo (hi - 1)
+                | otherwise = error $ "invalid range: " ++ show (lo, hi)
+
+-- hexDigit is a parser for a single hex digit
+hexDigit :: Parser Char
+hexDigit = satisfy isHexDigit
+
+-- Parses lo, lo+1, ..., hi hex digits, trying the longest match first
+hexDigits :: Int -> Int -> Parser String
+hexDigits lo hi | lo == hi = count lo hexDigit
+                | lo  < hi = count hi hexDigit <|| hexDigits lo (hi - 1)
+                | otherwise = error $ "invalid range: " ++ show (lo, hi)
+
+natural :: Parser Int
+natural = read <$> many1 digit
+
+positive :: Parser Int
+positive = postCheck (> 0) natural
+
+-- like string, but strips away empty quotes if they occur between the
+-- characters
+stripNullQuotes :: String -> Parser String
+stripNullQuotes [] = pure ""
+stripNullQuotes (c : cs) = (:) <$>
+  char c <*> (optEmptyQuoting *> stripNullQuotes cs)
+
+-- Get all characters cs until s appears a substring, consume s and
+-- return cs
+getUntil :: String -> Parser String
+getUntil s = manyTill anyChar (string s)
+
+-- Parse with p, but succeed and comsume input only if isOk p holds.
+postCheck :: (a -> Bool) -> Parser a -> Parser a
+postCheck isOk p = do
+  result <- p
+  if isOk result
+    then pure result
+    else pfail
+
+oneStr :: [String] -> Parser String
 oneStr = oneOf . map string
 
-oneOf :: [ReadP a] -> ReadP a
+oneOf :: [Parser a] -> Parser a
 oneOf = foldr1 (<||)
 
 ------------------------------------------------------------------------------
@@ -967,6 +1062,24 @@ resolveOBRCondl i (CondYesNo c e1 e2) =
 
 resolveOBRCond i (Assert mc dir m e) = Assert mc dir m <$> resolveOBR i e
 resolveOBRCond i cond = (i, cond)
+
+------------------------------------------------------------------------------
+--                        State manipultaion
+
+localST :: Parser Re -> Parser Re
+localST p = pushEnv *> p <* popEnv
+  where
+    pushEnv = modify (\envs -> head envs : envs)
+    popEnv  = modify tail
+
+applyOptions :: [InternalOpt] -> [InternalOpt] -> [Env] -> [Env]
+applyOptions _ _ [] =
+  error "empty state"
+applyOptions onOpts offOpts (env:rest) =
+  env { ignoreWS   = update ignoreWS IngoreWS
+       } : env:rest
+  where
+    update f opt = (f env || (opt `elem` onOpts)) && (opt `notElem` offOpts)
 
 
 ------------------------------------------------------------------------------
