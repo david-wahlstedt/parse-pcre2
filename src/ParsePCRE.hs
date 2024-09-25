@@ -11,7 +11,7 @@
 module ParsePCRE where
 
 import Control.Monad.State
-    ( modify, evalStateT, MonadTrans(lift), StateT(..) )
+    ( get, modify, evalStateT, MonadTrans(lift), StateT(..) )
 import Data.Char(chr, isDigit, isAlphaNum, isLetter, isAscii, isControl,
                  isHexDigit, isOctDigit, isPrint, isSpace, toLower)
 import qualified Data.HashMap.Strict as HM
@@ -551,6 +551,27 @@ skippable :: Parser String
 skippable
   =   string "(?#" *> getUntil ")"
   <|| emptyQuoting
+  <|| oneLineComment
+  <|| ignoredWS
+
+oneLineComment :: Parser String
+oneLineComment = do
+  s <- get
+  let env = head s
+      x = ignoreWS env
+      xx = ignoreWSClasses env
+  if x || xx
+    then char '#' *> (getUntil "\n" <|| manyTill anyChar eof)
+    else pfail
+
+ignoredWS = do
+  s <- get
+  let env = head s
+      x = ignoreWS env
+      xx = ignoreWSClasses env
+  if x || xx
+    then "" <$ asciiWhiteSpace
+    else pfail
 
 emptyQuoting :: Parser String
 emptyQuoting
@@ -560,6 +581,7 @@ emptyQuoting
 -- Strips away zero or more consecutive empty quotings
 optEmptyQuoting :: Parser String
 optEmptyQuoting = "" <$ many emptyQuoting
+
 
 --                          Option setting
 
@@ -830,9 +852,19 @@ coutStr_ open close
 --                             Literals
 
 literal :: Parser Re
-literal = Lit <$> nonSpecial topLevelSpecials
+literal = Lit <$> do
+  s <- get
+  let env = head s
+      x = ignoreWS env
+      xx = ignoreWSClasses env
+  if x || xx
+    then satisfy -- # and ascii whitespace are now special
+         (\c -> c/= '#' &&
+                not (isAsciiWhiteSpace c) &&
+                c `notElem` topLevelSpecials)
+    else nonSpecial topLevelSpecials
 
-nonSpecial :: Foldable t => t Char -> Parser Char
+nonSpecial :: [Char] -> Parser Char
 nonSpecial specials = satisfy (not . flip elem specials)
 
 -- Needs to be escaped on top level (outside character classes):
@@ -926,6 +958,11 @@ printableAscii = satisfy (\c -> isAscii c && isPrint c)
 
 nonAlphanumAscii :: Parser Char
 nonAlphanumAscii = satisfy (\c -> not (isAlphaNum c && isAscii c))
+
+asciiWhiteSpace :: Parser Char
+asciiWhiteSpace = satisfy isAsciiWhiteSpace
+
+isAsciiWhiteSpace c = isSpace c && isAscii c
 
 groupNameChar :: Bool -> Parser Char
 groupNameChar isFirst
