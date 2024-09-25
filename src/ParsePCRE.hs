@@ -6,11 +6,12 @@
 {-# OPTIONS_GHC -Wno-unused-matches #-}
 {-# OPTIONS_GHC -Wno-unused-top-binds #-}
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
-{-# HLINT ignore "Use tuple-section" #-}
+{-# LANGUAGE TupleSections #-}
 
 module ParsePCRE where
 
 import Control.Monad.State
+    ( modify, evalStateT, MonadTrans(lift), StateT(..) )
 import Data.Char(chr, isDigit, isAlphaNum, isLetter, isAscii, isControl,
                  isHexDigit, isOctDigit, isPrint, isSpace, toLower)
 import qualified Data.HashMap.Strict as HM
@@ -567,6 +568,7 @@ optionSetting
   =   StartOpt <$> (string "(*" *> startOpt <* char ')')
   <|| internalOpts
 
+internalOpts :: Parser OptionSetting
 internalOpts = do
   (onOpts, offOpts) <- string "(?" *> optionsOnOff <* char ')'
   modify (applyOptions onOpts offOpts)
@@ -574,8 +576,8 @@ internalOpts = do
 
 optionsOnOff :: Parser ([InternalOpt], [InternalOpt])
 optionsOnOff
-  =   (,) <$> (many internalOpt <* char '-') <*> many internalOpt
-  <|| (\opts -> (opts, [])) <$> many internalOpt
+  =   (,)   <$> (many internalOpt <* char '-') <*> many internalOpt
+  <|| (,[]) <$> many internalOpt
 
 startOpt :: Parser StartOpt
 startOpt
@@ -1007,6 +1009,7 @@ oneOf = foldr1 (<||)
 -- BackRef or EOct followed by possible trailing non octal digit
 -- literals, dependent on whether the highest capture group count i so
 -- far: length ds == 1 || i > read ds -> BackRef; otherwise Escape EOct.
+resolveOctOrBackrefs :: Re -> Re
 resolveOctOrBackrefs e = snd $ resolveOBR 0 e
 
 resolveOBR :: Int -> Re -> (Int, Re)
@@ -1028,7 +1031,7 @@ resolveOBR i (OctOrBackRef ds)
   -- reference may also be above 0o377, and this is not allowed in
   -- non-UTF mode. We don't take this into account in the parser.
   | n > i && length ds /= 1 && not (null octs) =
-      (i, Seq $ (Esc $ fromOctStr octs) : map Lit rest)
+      (i, Seq $ Esc (fromOctStr octs) : map Lit rest)
   | otherwise =
       (i, BackRef $ ByNumber n)
   where
