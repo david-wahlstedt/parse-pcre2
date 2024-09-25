@@ -30,10 +30,9 @@ import ParseHelpScriptName ( namesAndConsScriptName )
 --                     Parser monad transformer
 
 data Env = Options{
-  -- The following are, so far, the only options we are aware of that
-  -- affect how the parser behaves
+  -- Covers only options that affect parsing
   ignoreWS :: Bool, -- (?x) ignore unescaped whitespace+treat #.*\n as comments
-  pcre2ExtendedMore :: Bool, -- (?xx) like x, but also ign. sp. in char classes
+  ignoreWSClasses :: Bool, -- (?xx) like x, but also ignore ws in char classes
   noAutoCapture :: Bool -- (?n)
   }
   deriving Show
@@ -57,7 +56,9 @@ parsePCRE input =
     _                -> Nothing
   where
     initialEnv = Options
-      { ignoreWS   = False
+      { ignoreWS        = False,
+        ignoreWSClasses = False,
+        noAutoCapture   = False
       }
 
 
@@ -605,7 +606,7 @@ internalOpt
   =   CaseLess           <$ string  "i"
   <|| AllowDupGrp        <$ string  "J"
   <|| Multiline          <$ string  "m"
-  <|| NoAutoCapt         <$ string  "n"
+  <|| NoAutoCapture      <$ string  "n"
   <|| CaseLessNoMixAscii <$ string  "r"
   <|| SingleLine         <$ string  "s"
   <|| Ungreedy           <$ string  "U"
@@ -1075,9 +1076,11 @@ localST p = pushEnv *> p <* popEnv
 applyOptions :: [InternalOpt] -> [InternalOpt] -> [Env] -> [Env]
 applyOptions _ _ [] =
   error "empty state"
-applyOptions onOpts offOpts (env:rest) =
-  env { ignoreWS   = update ignoreWS IngoreWS
-       } : env:rest
+applyOptions onOpts offOpts (env : rest) =
+  env { ignoreWS        = update ignoreWS        IngoreWS,
+        ignoreWSClasses = update ignoreWSClasses IngoreWSClasses,
+        noAutoCapture   = update noAutoCapture   NoAutoCapture
+       } : env : rest
   where
     update f opt = (f env || (opt `elem` onOpts)) && (opt `notElem` offOpts)
 

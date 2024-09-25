@@ -322,7 +322,7 @@ data InternalOpt
   | CaseLess           -- (?i) caseless
   | AllowDupGrp        -- (?J) allow duplicate named groups
   | Multiline          -- (?m) multiline
-  | NoAutoCapt         -- (?n) no auto capture
+  | NoAutoCapture      -- (?n) no auto capture
   | CaseLessNoMixAscii -- (?r) restrict caseless to either ASCII or non-ASCII
   | SingleLine         -- (?s) single line (dotall)
   | Ungreedy           -- (?U) default ungreedy (lazy)
