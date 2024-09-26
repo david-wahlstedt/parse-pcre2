@@ -71,10 +71,10 @@ alt :: Parser Re
 alt = Alt <$> sepBy1 sequencing (char '|')
 
 sequencing :: Parser Re
-sequencing = Seq <$> (option "" comment *> many atom)
+sequencing = Seq <$> (skippables *> many atom)
 
 atom :: Parser Re
-atom = atom' <* option "" comment
+atom = atom' <* skippables
 
 atom' :: Parser Re
 atom'
@@ -109,7 +109,7 @@ quantifiable
   <|| Ctrl <$> (string "\\c" *> printableAscii) -- \c x, printable ascii
   -- a quoting is not really quantifiable, but its last character will
   -- be quanfitied, and this is handeled by the atom parser
-  <|| Quoting   <$> quoting
+  <|| Quoting   <$> postCheck (not . null) quoting
   <|| group
   <|| scriptRun
   <|| lookAround
@@ -447,7 +447,7 @@ ccSpecials = ['\\', ']']
 --                           Quantifiers
 
 quantifier :: Parser Quantifier
-quantifier = option "" comment *> quantifier'
+quantifier = skippables *> quantifier'
 
 quantifier' :: Parser Quantifier
 quantifier'
@@ -467,7 +467,7 @@ quantifier'
         (skipSpaces *> natural <* skipSpaces <* char '}')
 
 quantMode :: Parser QuantifierMode
-quantMode = option "" comment *> quantMode'
+quantMode = skippables *> quantMode'
 
 quantMode' :: Parser QuantifierMode
 quantMode'
@@ -540,10 +540,14 @@ namedCapture
 groupName :: Parser String
 groupName = (:) <$> groupNameChar True <*> many (groupNameChar False)
 
---                             Comments
 
-comment :: Parser String
-comment
+--                       Comments and skippables
+
+skippables :: Parser ()
+skippables = () <$ many skippable
+
+skippable :: Parser String
+skippable
   =   string "(?#" *> getUntil ")"
   <|| emptyQuoting
 

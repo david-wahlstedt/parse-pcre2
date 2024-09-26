@@ -9,3 +9,6 @@ a+(?#x)?
 \23(?#x)4
 \234(?#x)
 a{(?#x)2,3}
+(?#two)(?#comments)a
+(?#two)(?#comments)\Ea
+(?#two)\Q\E(?#comments)\Ea
