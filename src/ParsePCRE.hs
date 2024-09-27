@@ -111,11 +111,11 @@ quantifiable
   -- a quoting is not really quantifiable, but its last character will
   -- be quanfitied, and this is handeled by the atom parser
   <|| Quoting   <$> postCheck (not . null) quoting
-  <|| group
+  <|| localST group
   <|| scriptRun
   <|| lookAround
   <|| Chartype  <$> charType
-  <|| Cond      <$> conditional
+  <|| Cond      <$> localST conditional
   <|| Charclass <$> charClass
   <|| BackRef   <$> backRef
   <|| SubCall   <$> subCall
@@ -496,8 +496,7 @@ anchor
 
 group :: Parser Re
 group
-  = localST $
-      atomicNonCapture
+  =   atomicNonCapture
   <|| nonCapture
   <|| nonCaptureOpts
   <|| namedCapture
@@ -514,10 +513,9 @@ nonCapture = Group NonCapture <$>  (string "(?:" *> alt <* char ')')
 nonCaptureOpts :: Parser Re
 nonCaptureOpts
   = mkGroup <$>
-    (string "(?" *> (optionsOnOff <* char ':')) <*> alt <* char ')'
+    (string "(?" *> (internalOpts <* char ':')) <*> alt <* char ')'
   where
-    mkGroup :: ([InternalOpt], [InternalOpt]) -> Re -> Re
-    mkGroup (ons, offs) = Group (NonCaptureOpts ons offs)
+    mkGroup (InternalOpts ons offs) = Group (NonCaptureOpts ons offs)
 
 nonCaptureReset :: Parser Re
 nonCaptureReset
@@ -588,11 +586,11 @@ optEmptyQuoting = "" <$ many emptyQuoting
 optionSetting :: Parser OptionSetting
 optionSetting
   =   StartOpt <$> (string "(*" *> startOpt <* char ')')
-  <|| internalOpts
+  <|| string "(?" *> internalOpts  <* char ')'
 
 internalOpts :: Parser OptionSetting
 internalOpts = do
-  (onOpts, offOpts) <- string "(?" *> optionsOnOff <* char ')'
+  (onOpts, offOpts) <- optionsOnOff
   modify (applyOptions onOpts offOpts)
   pure (InternalOpts onOpts offOpts)
 
@@ -1111,7 +1109,7 @@ resolveOBRCond i cond = (i, cond)
 ------------------------------------------------------------------------------
 --                        State manipultaion
 
-localST :: Parser Re -> Parser Re
+localST :: Parser a -> Parser a
 localST p = pushEnv *> p <* popEnv
   where
     pushEnv = modify (\envs -> head envs : envs)
