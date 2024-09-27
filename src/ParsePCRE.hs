@@ -336,12 +336,12 @@ charClass :: Parser Charclass
 charClass
   =   postCheck checkRanges $
       fixQuoting <$> (
-      Noneof <$> (stripNullQuotes "[^" *> charClassBody' <* char ']')
-  <|| Noneof [] <$ stripNullQuotes "[^]"
+      Noneof <$> (stripCCSkippables "[^" *> charClassBody' <* char ']')
+  <|| Noneof [] <$ stripCCSkippables "[^]"
   <|| Oneof  <$> (char   '['  *> charClassBody' <* char ']')
-  <|| Oneof [] <$ stripNullQuotes "[]")
+  <|| Oneof [] <$ stripCCSkippables "[]")
   where
-    charClassBody' = charClassBody <* optEmptyQuoting
+    charClassBody' = charClassBody <* ccSkippables
 
     -- Character types and POSIX sets may not be part of ranges:
     checkRanges = charclassCase p p
@@ -384,16 +384,16 @@ charClass
 charClassBody :: Parser [CharclassItem]
 charClassBody
   =   (:) . Range (CCLit ']') <$>
-       (optEmptyQuoting <* stripNullQuotes "]-" *> charClassAtom) <*>
+       (ccSkippables <* stripCCSkippables "]-" *> charClassAtom) <*>
        many charClassItem
   <|| (CCAtom (CCLit ']') :) <$>
-       (optEmptyQuoting <* char ']' *> many charClassItem)
+       (ccSkippables <* char ']' *> many charClassItem)
   <|| many charClassItem
 
 charClassRange :: Parser CharclassItem
 charClassRange
   = Range <$>
-    charClassAtom <*> ((optEmptyQuoting <* char '-') *> charClassAtom)
+    charClassAtom <*> ((ccSkippables <* char '-') *> charClassAtom)
 
 charClassItem :: Parser CharclassItem
 charClassItem
@@ -401,7 +401,7 @@ charClassItem
   <|| CCAtom <$> charClassAtom
 
 charClassAtom :: Parser CharclassAtom
-charClassAtom = optEmptyQuoting *> charClassAtom'
+charClassAtom = ccSkippables *> charClassAtom'
 
 charClassAtom' :: Parser CharclassAtom
 charClassAtom'
@@ -438,7 +438,13 @@ setName
   <|| SetXdigit <$ string "xdigit" -- hexadecimal digit
 
 ccLit :: Parser Char
-ccLit = nonSpecial ccSpecials
+ccLit = do
+  s <- get
+  let env = head s
+      xx = ignoreWSClasses env
+  if xx
+    then nonSpecial ([' ', '\t'] ++ ccSpecials)
+    else nonSpecial ccSpecials
 
 -- Set of special characters that need to be escaped inside character classes
 ccSpecials :: [Char]
@@ -576,9 +582,27 @@ emptyQuoting
   =   string "\\Q\\E" -- Ignore empty quotings
   <|| string "\\E"    -- An isolated \E that is not preceded by \Q is ignored.
 
--- Strips away zero or more consecutive empty quotings
-optEmptyQuoting :: Parser String
-optEmptyQuoting = "" <$ many emptyQuoting
+-- Character class skippables
+
+ccWhitespace = satisfy (`elem` [' ', '\t'])
+
+-- Strips away zero or more empty quotings. If the xx
+-- option is active, we also skip tabs and spaces.
+ccSkippables :: Parser String
+ccSkippables = "" <$ do
+  s <- get
+  let env = head s
+      xx = ignoreWSClasses env
+  if xx
+    then many (emptyQuoting <|| "" <$ ccWhitespace)
+    else many emptyQuoting
+
+-- like string, but strips away empty quotes if they occur between the
+-- characters
+stripCCSkippables :: String -> Parser String
+stripCCSkippables [] = pure ""
+stripCCSkippables (c : cs)
+  = (:) <$> char c <*> (ccSkippables *> stripCCSkippables cs)
 
 
 --                          Option setting
@@ -1008,13 +1032,6 @@ natural = read <$> many1 digit
 
 positive :: Parser Int
 positive = postCheck (> 0) natural
-
--- like string, but strips away empty quotes if they occur between the
--- characters
-stripNullQuotes :: String -> Parser String
-stripNullQuotes [] = pure ""
-stripNullQuotes (c : cs) = (:) <$>
-  char c <*> (optEmptyQuoting *> stripNullQuotes cs)
 
 -- Get all characters cs until s appears a substring, consume s and
 -- return cs

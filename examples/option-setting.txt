@@ -69,3 +69,7 @@
 (?:a (?x) b  c)d e
 (?(?C9)(?=)a(?x)b c|d ef) u
 (?x:a b) c
+(?:(?xx)[ a	b])(?# ' ' and '\t' ignored in char class)
+(?:(?xx)[ ] - a	#])(?# ' ' and '\t' ignored in char class)
+(?:(?xx)[ab])(?#\r not ignored)
+(?x:ab)(?#\r ignored)
