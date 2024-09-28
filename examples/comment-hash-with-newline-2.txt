@@ -1,0 +1,3 @@
+((?x)abc#def
+g(?-x)hi#x(?xx)y#comment
+z)#hash

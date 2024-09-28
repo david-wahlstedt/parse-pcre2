@@ -322,14 +322,14 @@ data InternalOpt
   | CaseLess           -- (?i) caseless
   | AllowDupGrp        -- (?J) allow duplicate named groups
   | Multiline          -- (?m) multiline
-  | NoAutoCapt         -- (?n) no auto capture
+  | NoAutoCapture      -- (?n) no auto capture
   | CaseLessNoMixAscii -- (?r) restrict caseless to either ASCII or non-ASCII
   | SingleLine         -- (?s) single line (dotall)
   | Ungreedy           -- (?U) default ungreedy (lazy)
-  | IngoreWS           -- (?x) ignore white space except in classes or \Q...\E
-  | IngoreWSClasses    -- (?xx) as (?x) but also ignore space and tab in class
+  | IgnoreWS           -- (?x) ignore white space except in classes or \Q...\E
+  | IgnoreWSClasses    -- (?xx) as (?x) but also ignore space and tab in class
   | UnsetImnrsx        -- (?^) unset imnrsx options
-  deriving Show
+  deriving (Eq, Show)
 
 
 --                            Lookaround

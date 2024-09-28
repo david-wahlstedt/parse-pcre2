@@ -1,4 +1,4 @@
-^(?<hgroup>(?<hex>[[:xdigit:]]{0,4}) # grab a sequence of up to 4 hex digits
+(?x)^(?<hgroup>(?<hex>[[:xdigit:]]{0,4}) # grab a sequence of up to 4 hex digits
                                      # and name this pattern for usage later
      (?<!:::):{1,2})                 # match 1 or 2 ':' characters
                                      # as long as we can't match 3

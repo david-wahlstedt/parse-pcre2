@@ -45,7 +45,6 @@
 (?aP-:x)
 (?aT-:x)
 (?a-:x)
-(?^-:x)
 (?i-x:x)
 (?J-x:x)
 (?m-x:x)
@@ -61,8 +60,24 @@
 (?aP-x:x)
 (?aT-x:x)
 (?a-x:x)
-(?^-x:x)
 (?x-xx:x)
 (?x-xxx:x)
 (?x-xxxx:x)
 (?x-xxxxx:x)
+(?:a (?x) b  c)d e
+(?(?C9)(?=)a(?x)b c|d ef) u
+(?x:a b) c
+(?:(?xx)[ a	b])(?# ' ' and '\t' ignored in char class)
+(?:(?xx)[ ] - a	#])(?# ' ' and '\t' ignored in char class)
+(?:(?xx)[ab])(?#\r not ignored)
+(?x:ab)(?#\r ignored)
+(?x:a b(?^)c d)
+(?x)(?U:a bc d)
+(?^x)a b
+(?^xx:[a b])
+(?^x:a b)
+(?^U: a b)
+(?xx:(?^)[a b])(?# unsets xx, so ' ' is not ignored)
+(?x:(?^)[a b])(?# unsets xx, becuase x is unset, so ' ' is not ignored)
+(?:(?x)(?-xx)[a b] c)
+(?:(?xx)(?-x)[a b] c)

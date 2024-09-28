@@ -42,6 +42,7 @@ library
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -XLambdaCase
   build-depends:
       base >=4.7 && <5
+    , mtl
     , pretty-show
     , unordered-containers
   default-language: Haskell2010
@@ -57,6 +58,7 @@ executable parse-pcre2
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -XLambdaCase -O2 -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       base >=4.7 && <5
+    , mtl
     , parse-pcre2
     , pretty-show
     , unordered-containers
@@ -74,6 +76,7 @@ test-suite parse-pcre2-test
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -XLambdaCase -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       base >=4.7 && <5
+    , mtl
     , parse-pcre2
     , pretty-show
     , unordered-containers
