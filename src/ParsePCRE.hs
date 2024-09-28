@@ -10,6 +10,7 @@
 
 module ParsePCRE where
 
+import Control.Monad( void )
 import Control.Monad.State
     ( get, modify, evalStateT, MonadTrans(lift), StateT(..) )
 import Data.Char(chr, isDigit, isAlphaNum, isLetter, isAscii, isControl,
@@ -549,7 +550,7 @@ groupName = (:) <$> groupNameChar True <*> many (groupNameChar False)
 --                       Comments and skippables
 
 skippables :: Parser ()
-skippables = () <$ many skippable
+skippables = void $ many skippable
 
 skippable :: Parser String
 skippable
@@ -660,8 +661,8 @@ internalOpt
   <|| CaseLessNoMixAscii <$ string  "r"
   <|| SingleLine         <$ string  "s"
   <|| Ungreedy           <$ string  "U"
-  <|| IngoreWSClasses    <$ string "xx"
-  <|| IngoreWS           <$ string  "x"
+  <|| IgnoreWSClasses    <$ string "xx"
+  <|| IgnoreWS           <$ string  "x"
   <|| UCPAsciiD          <$ string "aD"
   <|| UCPAsciiS          <$ string "aS"
   <|| UCPAsciiW          <$ string "aW"
@@ -897,6 +898,9 @@ topLevelSpecials = ['^', '\\', '|', '(', ')', '[', '$', '+', '*', '?', '.']
 ------------------------------------------------------------------------------
 --                 Lifted ReadP parser combinators
 
+-- We mimic ReadP's implementations of the compound operations to lift
+-- them into the Parser monad transformer.
+
 -- For efficiency, it is crucial that this operator discards its
 -- second argument if the first succeeds: for instance,
 -- examples/charclass-hex2-mixed-ranges.txt parses about 2300 times
@@ -906,14 +910,12 @@ topLevelSpecials = ['^', '\\', '|', '(', ')', '[', '$', '+', '*', '?', '.']
 infixl 3 <||
 (<||) :: Parser a -> Parser a -> Parser a
 p1 <|| p2 = StateT $ \s ->
-  runStateT p1 s <++ runStateT p2 s
-  where (<++) = (R.<++)
+  runStateT p1 s R.<++ runStateT p2 s
 
 infixl 3 <||>
 (<||>) :: Parser a -> Parser a -> Parser a
 p1 <||> p2 = StateT $ \s ->
-  runStateT p1 s +++ runStateT p2 s
-  where (+++) = (R.+++)
+  runStateT p1 s R.+++ runStateT p2 s
 
 -- to distinguich it from State's get, we name it anyChar
 anyChar :: Parser Char
@@ -931,7 +933,9 @@ manyTill p end = scan
     scan = (end >> return []) <|| (:) <$> p <*> scan
 
 count :: Int -> Parser a -> Parser [a]
-count n p = lift (R.count n (evalStateT p []))
+count n p = do
+  s <- get
+  lift (R.count n (evalStateT p s))
 
 satisfy :: (Char -> Bool) -> Parser Char
 satisfy = lift . R.satisfy
@@ -948,18 +952,18 @@ skipSpaces = lift R.skipSpaces
 
 many1 :: Parser a -> Parser [a]
 many1 p = StateT $ \s -> do
-  (a, s') <- runStateT p s
-  (as, finalState) <- runStateT (many p) s'
-  return (a : as, finalState)
+  (a,  s' ) <- runStateT p s
+  (as, s'') <- runStateT (many p) s'
+  return (a : as, s'')
 
 many :: Parser a -> Parser [a]
 many p = StateT $ \s -> return ([], s) R.+++ runStateT (many1 p) s
 
 sepBy1 :: Parser a -> Parser sep -> Parser [a]
 sepBy1 p sep = StateT $ \s -> do
-  (firstItem, s1) <- runStateT p s
-  (restItems, finalState) <- runStateT (many (sep >> p)) s1
-  return (firstItem : restItems, finalState)
+  (a,  s' ) <- runStateT p s
+  (as, s'') <- runStateT (many (sep >> p)) s'
+  return (a : as, s'')
 
 sepBy :: Parser a -> Parser sep -> Parser [a]
 sepBy p sep = StateT $ \s ->
@@ -1136,8 +1140,8 @@ applyOptions :: [InternalOpt] -> [InternalOpt] -> [Env] -> [Env]
 applyOptions _ _ [] =
   error "empty state"
 applyOptions onOpts offOpts (env : rest) =
-  env { ignoreWS        = update ignoreWS        IngoreWS,
-        ignoreWSClasses = update ignoreWSClasses IngoreWSClasses,
+  env { ignoreWS        = update ignoreWS        IgnoreWS,
+        ignoreWSClasses = update ignoreWSClasses IgnoreWSClasses,
         noAutoCapture   = update noAutoCapture   NoAutoCapture
        } : env : rest
   where

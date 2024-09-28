@@ -326,8 +326,8 @@ data InternalOpt
   | CaseLessNoMixAscii -- (?r) restrict caseless to either ASCII or non-ASCII
   | SingleLine         -- (?s) single line (dotall)
   | Ungreedy           -- (?U) default ungreedy (lazy)
-  | IngoreWS           -- (?x) ignore white space except in classes or \Q...\E
-  | IngoreWSClasses    -- (?xx) as (?x) but also ignore space and tab in class
+  | IgnoreWS           -- (?x) ignore white space except in classes or \Q...\E
+  | IgnoreWSClasses    -- (?xx) as (?x) but also ignore space and tab in class
   | UnsetImnrsx        -- (?^) unset imnrsx options
   deriving (Eq, Show)
 
