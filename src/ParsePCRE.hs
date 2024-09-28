@@ -613,16 +613,7 @@ optionSetting
   =   StartOpt <$> (string "(*" *> startOpt <* char ')')
   <|| string "(?" *> internalOpts  <* char ')'
 
-internalOpts :: Parser OptionSetting
-internalOpts = do
-  (onOpts, offOpts) <- optionsOnOff
-  modify (applyOptions onOpts offOpts)
-  pure (InternalOpts onOpts offOpts)
-
-optionsOnOff :: Parser ([InternalOpt], [InternalOpt])
-optionsOnOff
-  =   (,)   <$> (many internalOpt <* char '-') <*> many internalOpt
-  <|| (,[]) <$> many internalOpt
+-- Non internal options
 
 startOpt :: Parser StartOpt
 startOpt
@@ -651,6 +642,26 @@ startOpt
   -- What \R matches:
   <|| BsrAnycrlf <$ string "BSR_ANYCRLF"
   <|| BsrUnicode <$ string "BSR_UNICODE"
+
+-- Internal options
+
+internalOpts :: Parser OptionSetting
+internalOpts = do
+  (onOpts, offOpts) <- optionsOnOff
+  modify (applyOptions onOpts offOpts)
+  pure (InternalOpts onOpts offOpts)
+
+optionsOnOff :: Parser ([InternalOpt], [InternalOpt])
+optionsOnOff
+  =   postCheck noImnrsx
+      ((,) <$> (many internalOpt <* char '-') <*> many internalOpt)
+  <|| postCheck (imnrsxFirst . fst)
+      ((,[]) <$> many internalOpt)
+  where
+    -- The ^ option may only occur first, and without hyphen
+    noImnrsx (ons, offs) = all (UnsetImnrsx `notElem`) [ons, offs]
+    imnrsxFirst (UnsetImnrsx : ons) = UnsetImnrsx `notElem` ons
+    imnrsxFirst ons = UnsetImnrsx `notElem` ons
 
 internalOpt :: Parser InternalOpt
 internalOpt
@@ -1139,6 +1150,28 @@ localST p = pushEnv *> p <* popEnv
 applyOptions :: [InternalOpt] -> [InternalOpt] -> [Env] -> [Env]
 applyOptions _ _ [] =
   error "empty state"
+applyOptions onOpts offOpts envs
+  | UnsetImnrsx `elem` offOpts =
+      -- the parser has already prevented this, but anyway:
+      error "^ must not appear after the hyphen"
+  | UnsetImnrsx `elem` onOpts =
+      case onOpts of
+        UnsetImnrsx : onOpts'
+          | UnsetImnrsx `notElem` onOpts' ->
+            -- turn off i, m, n, r, s, and x, and run the rest in envs'
+            let envs' = applyOptions [] imnrsx envs
+                imnrsx = [CaseLess, Multiline, NoAutoCapture,
+                          CaseLessNoMixAscii, SingleLine, IgnoreWS]
+            in applyOptions onOpts' offOpts envs'
+        _ ->
+          -- the parser has already prevented this, but anyway:
+          error "^ must only appear as the first option"
+  -- "Unsetting x or xx unsets both", so we add the missing one. This
+  -- won't get repeated, since both will be present next time.
+  | IgnoreWS `elem` offOpts && IgnoreWSClasses `notElem` offOpts =
+    applyOptions onOpts (IgnoreWSClasses : offOpts) envs
+  | IgnoreWSClasses `elem` offOpts && IgnoreWS `notElem` offOpts =
+    applyOptions onOpts (IgnoreWS : offOpts) envs
 applyOptions onOpts offOpts (env : rest) =
   env { ignoreWS        = update ignoreWS        IgnoreWS,
         ignoreWSClasses = update ignoreWSClasses IgnoreWSClasses,
