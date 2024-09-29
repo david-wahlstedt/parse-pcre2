@@ -1,5 +1,5 @@
 name:                parse-pcre2
-version:             0.1.0.0
+version:             0.1.0.1
 github:              "david-wahlstedt/parse-pcre2"
 license:             BSD-3-Clause
 author:              "David Wahlstedt"

@@ -51,14 +51,73 @@ or for files with several lines, one regex each:
 while IFS= read -r line || [ -n "$line" ]; do printf "%s" "$line" | parse-pcre2; done < examples/quoting.txt
 ```
 
+## Why a PCRE2 parser in Haskell?
+
+In fact, I wanted to write a Haskell program that produces random
+strings that match a given PCRE2 expression, a bit like
+[genex](https://hackage.haskell.org/package/regex-genex-0.7.0), but
+for PCRE2. That requires a parser!
+
+The Haskell regular expressions
+[page](https://wiki.haskell.org/Regular_expressions) has an overview
+of regex support, and includes C bindings to PCRE. However, the PCRE2
+C library doesn't have any function that returns an abstract syntax
+tree, in the sense one is used to in functional programming. As far as
+I am aware, there is no program or library available that just takes a
+PCRE2 expression and returns an abstract syntax tree. There is an
+[ANTLR4 grammar for
+PCRE](https://github.com/antlr/grammars-v4/blob/master/pcre/PCRE.g4),
+but it is not complete, and does not support parsing sensitive to
+option settings.
+
+
+
+However, we haven't found any parser covering the whole PCRE2
+language. We may try to connect this parser with some of the existing
+libraries in the future.
+
+## Features
+
+- **Complete PCRE2 syntax**: The parser supports all of PCRE2's syntax
+  (with some exceptions regarding the semantics of some option
+  settings, and how character encodings are treated, which is work in
+  progress).
+
+- **Supports dynamic option settings**: It is possible to turn on and
+  off options that affect the parsing rules in arbitrary positions in
+  the expression, such as `(?x)` and `(?xx)`, to ignore whitespace and
+  treat `#.*\n` as comments. Note that most of the options affect only
+  matching, and they will just be treated as syntactic constructions in
+  the resulting tree, and can be processed by the application that
+  uses our parser.
+
+- **No matching**: This program does not deal with the semantics of
+  PCRE2 in terms of matching, only the syntax; the output of the
+  parser is just a syntax tree.
+
+- **Forgiving syntax** Some options for PCRE2 that controls, for
+  instance, whether or not to allow empty character classes, are
+  always on, but this may change in future versions. In short, some
+  features of PCRE2 that forbids certain constructions due to
+  semantics, are allowed in our parser, and the idea is that the
+  application can take care of it. Another example is character
+  classes: The expression `[z-a]` is allowed, and yields a range from
+  `z` to `a`, which is not allowed by PCRE2. It is up to the
+  application to deal with that.
+
 ## PCRE2 sample expressions
 
 The examples in [examples/](examples/) are not yet systematic, but
 they cover many kinds of PCRE2 patterns. Some of them are taken from
 RFCs and YANG specifications, and some are hand-made for this parser.
-Some examples should fail, but most of them should succeed.
+Some examples (under directories with names containing substring
+`fail`) should fail, but the others should succeed.
 
 ## Limitations
+
+- **UTF-8 assumed**: The parser accepts option settings that
+  control which encoding the pattern is expected to match, but they
+  have no effect. We only deal with UTF-8 code points so far.
 
 - **Error handling**: There is no error handling: the parser just
   answers "No parse" if parse is unsuccessful.
@@ -74,13 +133,6 @@ programming point of view. The current version (as of 2024-08-16) does
 not contain any innovations or particularly interesting parts, when it
 comes to functional programming per se: the main goal was to have a
 working parser, and that seems to be the case!
-
-- **Infix operators**: The operators (mainly `<++`) coming with
-  `ReadP` and using together with applicative operators (such as
-  `<$>`, `<*>` and friends) is a bit unfortunate, since their
-  precedences force the author to use overly many parentheses. Also,
-  maybe using `<&>` (which is `flip <$>`) would be nicer, to get the
-  parsing first and the transforming application after it.
 
 - **Abstract syntax**: The current abstract syntax is somewhat a
   middle ground between two extremes: 1) retaining all information
@@ -98,19 +150,9 @@ working parser, and that seems to be the case!
   different properties such as being positive/negative,
   forward/behind, etc.
 
-- **Higher level functional programming**: Not so much. But when we
-  introduce taking option settings into account for the parsing, we
-  will probably need monad transformers, and this will call for more
-  elegant solutions, not to blow up the code complexity too much.
+- **Higher level functional programming**: Not so much. We have a
+  monad transformer that handles state and parsing, though.
 
 - **Module headers**: There are no export lists, and a lot of
-  suppressed warnings. This is for convenience, and should be changed.
-
-## Related work
-
-The Haskell
-[Regular_expressions](https://wiki.haskell.org/Regular_expressions)
-page has an overview of regex support, and some C bindings to PCRE.
-However, we haven't found any parser covering the whole PCRE2
-language. We may try to connect this parser with some of the existing
-libraries in the future.
+  suppressed warnings. This is for convenience, and should perhaps be
+  changed.
