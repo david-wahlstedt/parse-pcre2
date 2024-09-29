@@ -9,8 +9,8 @@ BINARY_PROPERTIES_INPUT = pcre2test/pcre2test-LP.txt
 AUTO_GEN_SCRIPT = $(CODEGEN_DIR)/code_gen.hs
 
 # Output files
-SCRIPT_NAMES_OUTPUTS = $(GEN_DIR)/AbsScriptName.hs $(GEN_DIR)/ParsHelpScriptName.hs
-BINARY_PROPERTIES_OUTPUTS = $(GEN_DIR)/AbsBinProp.hs $(GEN_DIR)/ParsHelpBinProp.hs
+SCRIPT_NAMES_OUTPUTS = $(GEN_DIR)/AbsScriptName.hs $(GEN_DIR)/ParseHelpScriptName.hs
+BINARY_PROPERTIES_OUTPUTS = $(GEN_DIR)/AbsBinProp.hs $(GEN_DIR)/ParseHelpBinProp.hs
 GENERATED_FILES = $(SCRIPT_NAMES_OUTPUTS) $(BINARY_PROPERTIES_OUTPUTS)
 
 # Default target
