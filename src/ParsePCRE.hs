@@ -29,39 +29,66 @@ import ParseHelpScriptName ( namesAndConsScriptName )
 
 
 ------------------------------------------------------------------------------
---                     Parser monad transformer
+--                             Parser state
 
-data Env = Options{
-  -- Covers only options that affect parsing
-  ignoreWS :: Bool, -- (?x) ignore unescaped whitespace+treat #.*\n as comments
-  ignoreWSClasses :: Bool, -- (?xx) like x, but also ignore ws in char classes
-  noAutoCapture :: Bool -- (?n)
+data State = State{
+  groupCount :: Int,
+  options :: [Options]
   }
   deriving Show
 
-type Parser a = StateT [Env] R.ReadP a
+data Options = Options{
+  -- Covers only options that affect parsing
+  ignoreWS :: Bool, -- (?x) ignore unescaped whitespace+treat #.*\n as comments
+  ignoreWSClasses :: Bool, -- (?xx) like x, but also ignore ws in char classes
+  noAutoCapture :: Bool -- (?n) don't assign numbers to capture groups
+  }
+  deriving Show
 
-runParser :: Env -> String -> [(Re, String)]
-runParser initialEnv input =
-  -- Start with the initial environment at the top of the stack
-  let initialState = [initialEnv]
-  in R.readP_to_S (evalStateT (re <* eof) initialState) input
+-- Initial values
 
+initialState = State{
+  groupCount = 0,
+  options = [initialOpts]
+  }
 
-------------------------------------------------------------------------------
---                        Parser entrypoint
-
-parsePCRE :: String -> Maybe Re
-parsePCRE input =
-  case runParser initialEnv input of
-    (result, "") : _ -> Just result
-    _                -> Nothing
-  where
-    initialEnv = Options
+initialOpts = Options
       { ignoreWS        = False,
         ignoreWSClasses = False,
         noAutoCapture   = False
       }
+
+-- Operations
+
+getOptions :: State -> Options
+getOptions = head . options
+
+modifyOptions :: ([Options] -> [Options]) -> Parser ()
+modifyOptions f = modify $ \s -> s { options = f (options s) }
+
+modifyGroupCount :: (Int -> Int) -> Parser ()
+modifyGroupCount f = modify $ \s -> s { groupCount = f (groupCount s) }
+
+
+------------------------------------------------------------------------------
+--                     Parser monad transformer
+
+type Parser a = StateT State R.ReadP a
+
+runParser :: State -> String -> [(Re, String)]
+runParser s input = R.readP_to_S (evalStateT (re <* eof) s) input
+
+
+------------------------------------------------------------------------------
+--                            PCRE2 Parsers
+
+--                        Parser entrypoint
+
+parsePCRE :: String -> Maybe Re
+parsePCRE input =
+  case runParser initialState input of
+    (result, "") : _ -> Just result
+    _                -> Nothing
 
 
 --                         Basic constructs
@@ -441,8 +468,8 @@ setName
 ccLit :: Parser Char
 ccLit = do
   s <- get
-  let env = head s
-      xx = ignoreWSClasses env
+  let opts = getOptions s
+      xx = ignoreWSClasses opts
   if xx
     then nonSpecial ([' ', '\t'] ++ ccSpecials)
     else nonSpecial ccSpecials
@@ -562,18 +589,18 @@ skippable
 oneLineComment :: Parser String
 oneLineComment = do
   s <- get
-  let env = head s
-      x = ignoreWS env
-      xx = ignoreWSClasses env
+  let opts = getOptions s
+      x  = ignoreWS opts
+      xx = ignoreWSClasses opts
   if x || xx
     then char '#' *> (getUntil "\n" <|| manyTill anyChar eof)
     else pfail
 
 ignoredWS = do
   s <- get
-  let env = head s
-      x = ignoreWS env
-      xx = ignoreWSClasses env
+  let opts = getOptions s
+      x  = ignoreWS opts
+      xx = ignoreWSClasses opts
   if x || xx
     then "" <$ asciiWhiteSpace
     else pfail
@@ -592,9 +619,7 @@ ccWhitespace = satisfy (`elem` [' ', '\t'])
 ccSkippables :: Parser String
 ccSkippables = "" <$ do
   s <- get
-  let env = head s
-      xx = ignoreWSClasses env
-  if xx
+  if ignoreWSClasses $ getOptions s
     then many (emptyQuoting <|| "" <$ ccWhitespace)
     else many emptyQuoting
 
@@ -648,7 +673,7 @@ startOpt
 internalOpts :: Parser OptionSetting
 internalOpts = do
   (onOpts, offOpts) <- optionsOnOff
-  modify (applyOptions onOpts offOpts)
+  modifyOptions (applyOptions onOpts offOpts)
   pure (InternalOpts onOpts offOpts)
 
 optionsOnOff :: Parser ([InternalOpt], [InternalOpt])
@@ -888,9 +913,9 @@ coutStr_ open close
 literal :: Parser Re
 literal = Lit <$> do
   s <- get
-  let env = head s
-      x = ignoreWS env
-      xx = ignoreWSClasses env
+  let opts = getOptions s
+      x = ignoreWS opts
+      xx = ignoreWSClasses opts
   if x || xx
     then satisfy -- # and ascii whitespace are now special
          (\c -> c/= '#' &&
@@ -1144,10 +1169,10 @@ resolveOBRCond i cond = (i, cond)
 localST :: Parser a -> Parser a
 localST p = pushEnv *> p <* popEnv
   where
-    pushEnv = modify (\envs -> head envs : envs)
-    popEnv  = modify tail
+    pushEnv = modifyOptions (\opts -> head opts : opts)
+    popEnv  = modifyOptions tail
 
-applyOptions :: [InternalOpt] -> [InternalOpt] -> [Env] -> [Env]
+applyOptions :: [InternalOpt] -> [InternalOpt] -> [Options] -> [Options]
 applyOptions _ _ [] =
   error "empty state"
 applyOptions onOpts offOpts envs
