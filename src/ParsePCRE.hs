@@ -10,9 +10,9 @@
 
 module ParsePCRE where
 
-import Control.Monad( void )
+import Control.Monad( void, when )
 import Control.Monad.State
-    ( get, modify, evalStateT, MonadTrans(lift), StateT(..) )
+    ( get, gets, modify, evalStateT, MonadTrans(lift), StateT(..) )
 import Data.Char(chr, isDigit, isAlphaNum, isLetter, isAscii, isControl,
                  isHexDigit, isOctDigit, isPrint, isSpace, toLower)
 import qualified Data.HashMap.Strict as HM
@@ -29,45 +29,61 @@ import ParseHelpScriptName ( namesAndConsScriptName )
 
 
 ------------------------------------------------------------------------------
---                     Parser monad transformer
+--                             Parser state
 
-data Env = Options{
-  -- Covers only options that affect parsing
-  ignoreWS :: Bool, -- (?x) ignore unescaped whitespace+treat #.*\n as comments
-  ignoreWSClasses :: Bool, -- (?xx) like x, but also ignore ws in char classes
-  noAutoCapture :: Bool -- (?n)
+data State = State{
+  groupCount :: Int,
+  options :: [Options]
   }
   deriving Show
 
-type Parser a = StateT [Env] R.ReadP a
+data Options = Options{
+  -- Covers only options that affect parsing
+  ignoreWS :: Bool, -- (?x) ignore unescaped whitespace+treat #.*\n as comments
+  ignoreWSClasses :: Bool, -- (?xx) like x, but also ignore ws in char classes
+  noAutoCapture :: Bool -- (?n) don't assign numbers to capture groups
+  }
+  deriving Show
 
-runParser :: Env -> String -> [(Re, String)]
-runParser initialEnv input =
-  -- Start with the initial environment at the top of the stack
-  let initialState = [initialEnv]
-  in R.readP_to_S (evalStateT (re <* eof) initialState) input
+-- Initial values
 
+initialState = State{
+  groupCount = 0,
+  options = [initialOpts]
+  }
 
-------------------------------------------------------------------------------
---                        Parser entrypoint
-
-parsePCRE :: String -> Maybe Re
-parsePCRE input =
-  case runParser initialEnv input of
-    (result, "") : _ -> Just result
-    _                -> Nothing
-  where
-    initialEnv = Options
+initialOpts = Options
       { ignoreWS        = False,
         ignoreWSClasses = False,
         noAutoCapture   = False
       }
 
 
+------------------------------------------------------------------------------
+--                     Parser monad transformer
+
+type Parser a = StateT State R.ReadP a
+
+runParser :: State -> String -> [(Re, String)]
+runParser s = R.readP_to_S (evalStateT (re <* eof) s)
+
+
+------------------------------------------------------------------------------
+--                            PCRE2 Parsers
+
+--                        Parser entrypoint
+
+parsePCRE :: String -> Maybe Re
+parsePCRE input =
+  case runParser initialState input of
+    (result, "") : _ -> Just result
+    _                -> Nothing
+
+
 --                         Basic constructs
 
 re :: Parser Re
-re = resolveOctOrBackrefs <$> alt
+re = alt
 
 alt :: Parser Re
 alt = Alt <$> sepBy1 sequencing (char '|')
@@ -106,17 +122,17 @@ atom'
 
 quantifiable :: Parser Re
 quantifiable
-  =   OctOrBackRef <$> (string "\\"  *> octOrBackRefDigits) -- \\[1-9][0-9]{2}
-  <|| Esc <$> escChar
+  --  OctOrBackRef <$> (string "\\"  *> octOrBackRefDigits) -- \\[1-9][0-9]{2}
+  =   Esc <$> escChar
   <|| Ctrl <$> (string "\\c" *> printableAscii) -- \c x, printable ascii
   -- a quoting is not really quantifiable, but its last character will
   -- be quanfitied, and this is handeled by the atom parser
   <|| Quoting   <$> postCheck (not . null) quoting
-  <|| localST group
+  <|| localOpts group
   <|| scriptRun
   <|| lookAround
   <|| Chartype  <$> charType
-  <|| Cond      <$> localST conditional
+  <|| Cond      <$> localOpts conditional
   <|| Charclass <$> charClass
   <|| BackRef   <$> backRef
   <|| SubCall   <$> subCall
@@ -135,13 +151,14 @@ quoting
 
 escChar :: Parser Char
 escChar
-  =   '\a'       <$   string "\\a"                   -- \a
-  <|| '\ESC'     <$   string "\\e"                   -- \e Esc
-  <|| '\f'       <$   string "\\f"                   -- \f FF
-  <|| '\n'       <$   string "\\n"                   -- \n
-  <|| '\r'       <$   string "\\r"                   -- \r
-  <|| '\t'       <$   string "\\t"                   -- \t
-  <|| fromOctStr <$> (string "\\0" *> octDigits 0 2) -- \\0[0-7]{0,2}
+  =   '\a'       <$   string "\\a"                    -- \a
+  <|| '\ESC'     <$   string "\\e"                    -- \e Esc
+  <|| '\f'       <$   string "\\f"                    -- \f FF
+  <|| '\n'       <$   string "\\n"                    -- \n
+  <|| '\r'       <$   string "\\r"                    -- \r
+  <|| '\t'       <$   string "\\t"                    -- \t
+  <|| fromOctStr <$> (string "\\0" *> octDigits 0 2)  -- \\0[0-7]{0,2}
+  <|| fromOctStr <$> (char '\\' *> octalIfNotBackRef) -- \\[1-9][0-7]{1,2}
   <|| fromOctStr <$> (string "\\o{" *> many1 octDigit <* char '}') -- \o{[0-7]+}
   <|| fromHexStr <$> (string "\\N{U+" *> many1 hexDigit <* char '}') -- \N{U+h+}
   <|| 'U'        <$   string "\\U"                                   -- \U
@@ -150,6 +167,24 @@ escChar
   <|| fromHexStr <$> (string "\\u{" *> many1 hexDigit <* char '}')   -- \u{h+}
   <|| fromHexStr <$> (string "\\u"  *> hexDigits 4 4)                -- \uhhhh
   <|| string   "\\" *> nonAlphanumAscii -- \ non alphanum ascii
+
+octalIfNotBackRef :: Parser [Char]
+octalIfNotBackRef = do
+  gCount <- getGroupCount
+  d <- posDigit
+  input <- lift R.look
+  let ds = takeWhile isDigit input
+      allDigits = d : ds
+      octs = takeWhile isOctDigit allDigits
+      n = read allDigits :: Int
+  -- We interpret octs as octal if:
+  --  n is above the number of groups encountered so far
+  --  there is not only one digit (then it's always a backref)
+  --  there is at least one octal digit
+  if n > gCount && length allDigits /= 1 && not (null octs)
+    -- Consume the rest of the octals and return all of the octals
+    then octs <$ string (tail octs)
+    else pfail
 
 
 --                         Character types
@@ -440,10 +475,8 @@ setName
 
 ccLit :: Parser Char
 ccLit = do
-  s <- get
-  let env = head s
-      xx = ignoreWSClasses env
-  if xx
+  opts <- getOptions
+  if ignoreWSClasses opts
     then nonSpecial ([' ', '\t'] ++ ccSpecials)
     else nonSpecial ccSpecials
 
@@ -511,7 +544,13 @@ group
   <|| capture
 
 capture :: Parser Re
-capture = Group Capture <$> (char '(' *> alt <* char ')')
+capture = do
+  opts <- getOptions
+  let numberingOn = not $ noAutoCapture opts
+  when numberingOn $ modifyGroupCount (+1)
+  n <- getGroupCount
+  let gType = if numberingOn then Capture n else Unnumbered
+  Group gType <$> (char '(' *> alt <* char ')')
 
 nonCapture :: Parser Re
 nonCapture = Group NonCapture <$>  (string "(?:" *> alt <* char ')')
@@ -526,7 +565,26 @@ nonCaptureOpts
 
 nonCaptureReset :: Parser Re
 nonCaptureReset
-  = Group NonCaptureReset <$> (string "(?|" *> alt <* char ')')
+  = Group NonCaptureReset <$> (string "(?|" *> resetAlt <* char ')')
+
+-- Each alternative starts with the same group count, and the result
+-- count is the maximum of the alternatives counts.
+resetAlt :: Parser Re
+resetAlt = Alt <$> do
+  n <- getGroupCount
+  e <- sequencing
+  n' <- getGroupCount
+  es <- many $ resetEach n
+  modifyGroupCount (max n')
+  pure (e : es)
+
+resetEach :: Int -> Parser Re
+resetEach n = do
+  _ <- char '|'
+  modifyGroupCount (const n)
+  e <- sequencing
+  modifyGroupCount (max n)
+  pure e
 
 atomicNonCapture :: Parser Re
 atomicNonCapture
@@ -561,19 +619,17 @@ skippable
 
 oneLineComment :: Parser String
 oneLineComment = do
-  s <- get
-  let env = head s
-      x = ignoreWS env
-      xx = ignoreWSClasses env
+  opts <- getOptions
+  let x  = ignoreWS opts
+      xx = ignoreWSClasses opts
   if x || xx
     then char '#' *> (getUntil "\n" <|| manyTill anyChar eof)
     else pfail
 
 ignoredWS = do
-  s <- get
-  let env = head s
-      x = ignoreWS env
-      xx = ignoreWSClasses env
+  opts <- getOptions
+  let x  = ignoreWS opts
+      xx = ignoreWSClasses opts
   if x || xx
     then "" <$ asciiWhiteSpace
     else pfail
@@ -591,10 +647,8 @@ ccWhitespace = satisfy (`elem` [' ', '\t'])
 -- option is active, we also skip tabs and spaces.
 ccSkippables :: Parser String
 ccSkippables = "" <$ do
-  s <- get
-  let env = head s
-      xx = ignoreWSClasses env
-  if xx
+  opts <- getOptions
+  if ignoreWSClasses opts
     then many (emptyQuoting <|| "" <$ ccWhitespace)
     else many emptyQuoting
 
@@ -648,7 +702,7 @@ startOpt
 internalOpts :: Parser OptionSetting
 internalOpts = do
   (onOpts, offOpts) <- optionsOnOff
-  modify (applyOptions onOpts offOpts)
+  modifyOptions (applyOptions onOpts offOpts)
   pure (InternalOpts onOpts offOpts)
 
 optionsOnOff :: Parser ([InternalOpt], [InternalOpt])
@@ -714,6 +768,24 @@ backRef
   =   ByName   <$> refByName
   <|| Relative <$> refRelative
   <|| ByNumber <$> refByNumber
+  <|| ByNumber <$> backRefIfNotOctal
+
+backRefIfNotOctal :: StateT State R.ReadP Int
+backRefIfNotOctal = do
+  _ <- char '\\'
+  d <- posDigit
+  gCount <- getGroupCount
+  input <- lift R.look
+  let ds = takeWhile isDigit input
+      allDigits = d : ds
+      octs = takeWhile isOctDigit allDigits
+      n = read allDigits :: Int
+  -- We negate the condition for octalIfNotBackRef
+  if n > gCount && length allDigits /= 1 && not (null octs)
+    then pfail
+    -- Consume the rest of the digits and return n
+    else n <$ string ds
+
 
 refByName :: Parser String
 refByName
@@ -887,10 +959,9 @@ coutStr_ open close
 
 literal :: Parser Re
 literal = Lit <$> do
-  s <- get
-  let env = head s
-      x = ignoreWS env
-      xx = ignoreWSClasses env
+  opts <- getOptions
+  let x = ignoreWS opts
+      xx = ignoreWSClasses opts
   if x || xx
     then satisfy -- # and ascii whitespace are now special
          (\c -> c/= '#' &&
@@ -1005,7 +1076,6 @@ groupNameChar :: Bool -> Parser Char
 groupNameChar isFirst
   = satisfy (\c -> not isFirst && isDigit c || isLetter c || c == '_')
 
--- see resolveOctOrBackrefs
 octOrBackRefDigits :: Parser String
 octOrBackRefDigits = (:) <$> posDigit <*> munch isDigit
 
@@ -1067,90 +1137,41 @@ oneStr = oneOf . map string
 oneOf :: [Parser a] -> Parser a
 oneOf = foldr1 (<||)
 
-------------------------------------------------------------------------------
---                      Syntax rebuild helpers
-
--- Traverse the expression, keeping track of the highest group we've
--- encountered so far, from left to right, in an in-order traversal
--- manner. The OctOrBackRef ds ocurrences are then replaced by either
--- BackRef or EOct followed by possible trailing non octal digit
--- literals, dependent on whether the highest capture group count i so
--- far: length ds == 1 || i > read ds -> BackRef; otherwise Escape EOct.
-resolveOctOrBackrefs :: Re -> Re
-resolveOctOrBackrefs e = snd $ resolveOBR 0 e
-
-resolveOBR :: Int -> Re -> (Int, Re)
-resolveOBR i (Group Capture e) =
-  Group (CaptureN i') <$> resolveOBR i' e
-  where i' = i + 1
-resolveOBR i (Group NonCaptureReset (Alt es)) =
-  let ies = map (resolveOBR i) es -- all alternatives start with i
-      (is, es') = unzip ies
-  in (maximum is, Group NonCaptureReset (Alt es'))
-resolveOBR i (OctOrBackRef ds)
-  -- The octOrBackRefDigits parser consumes as many digits ds as
-  -- available. If the decimal number n, that ds encode, is above the
-  -- highest capture group to the left, and ds has a non-empty octal
-  -- prefix, ds is considered as an octal escape of length at most 3,
-  -- followed by the rest of the digits as literals. In all other
-  -- cases ds is considered a backreference, and we don't considere
-  -- here whether the reference is too large or not. The octal
-  -- reference may also be above 0o377, and this is not allowed in
-  -- non-UTF mode. We don't take this into account in the parser.
-  | n > i && length ds /= 1 && not (null octs) =
-      (i, Seq $ Esc (fromOctStr octs) : map Lit rest)
-  | otherwise =
-      (i, BackRef $ ByNumber n)
-  where
-    n = read ds :: Int
-    (octs, rest) = span isOctDigit ds
-resolveOBR i (Alt es) =
-    let (i', es') = resolveOBRs i es
-    in (i', Alt es')
-resolveOBR i (Seq es) =
-    let (i', es') = resolveOBRs i es
-    in (i', Seq es')
-resolveOBR i (Quant m q e) =
-  Quant m q <$> resolveOBR i e
-resolveOBR i (Group g e) =
-  Group g <$> resolveOBR i e
-resolveOBR i (ScriptRun m e) =
-  ScriptRun m <$> resolveOBR i e
-resolveOBR i (Look d m e) = Look d m <$> resolveOBR i e
-resolveOBR i (Cond c) = Cond <$> resolveOBRCondl i c
-resolveOBR i e = (i,e)
-
-resolveOBRs :: Int -> [Re] -> (Int, [Re])
-resolveOBRs i [] = (i, [])
-resolveOBRs i (e:es) =
-    let (i' , e' ) = resolveOBR i e
-        (i'', es') = resolveOBRs i' es
-    in (i'', e' : es')
-
-resolveOBRCondl i (CondYes c e) =
-    let (i' , c') = resolveOBRCond i c
-    in CondYes c' <$> resolveOBR i' e
-resolveOBRCondl i (CondYesNo c e1 e2) =
-    let (i' , c') = resolveOBRCond i c
-        (i'', e1') = resolveOBR i' e1
-    in CondYesNo c' e1' <$> resolveOBR i'' e2
-
-resolveOBRCond i (Assert mc dir m e) = Assert mc dir m <$> resolveOBR i e
-resolveOBRCond i cond = (i, cond)
 
 ------------------------------------------------------------------------------
 --                        State manipultaion
 
-localST :: Parser a -> Parser a
-localST p = pushEnv *> p <* popEnv
-  where
-    pushEnv = modify (\envs -> head envs : envs)
-    popEnv  = modify tail
+-- Get options and capture group counter from the state
 
-applyOptions :: [InternalOpt] -> [InternalOpt] -> [Env] -> [Env]
+getOptions :: Parser Options
+getOptions = gets (head . options)
+
+getGroupCount :: Parser Int
+getGroupCount = gets groupCount
+
+-- Modify capture group counter and options
+
+modifyGroupCount :: (Int -> Int) -> Parser ()
+modifyGroupCount f = modify $ \s -> s { groupCount = f (groupCount s) }
+
+modifyOptions :: ([Options] -> [Options]) -> Parser ()
+modifyOptions f = modify $ \s -> s { options = f (options s) }
+
+-- Option settings are in scope in the remaining part of the group
+-- where it appeared. We duplicate the top of the options stack and
+-- run p in it
+localOpts :: Parser a -> Parser a
+localOpts p = pushOpts *> p <* popOpts
+  where
+    pushOpts = modifyOptions (\opts -> head opts : opts)
+    popOpts  = modifyOptions tail
+
+-- Sets given on-options and unsets the given off-options on the top
+-- of the options stack
+applyOptions :: [InternalOpt] -> [InternalOpt] -> [Options] -> [Options]
 applyOptions _ _ [] =
   error "empty state"
-applyOptions onOpts offOpts envs
+applyOptions onOpts offOpts optsStack
   | UnsetImnrsx `elem` offOpts =
       -- the parser has already prevented this, but anyway:
       error "^ must not appear after the hyphen"
@@ -1158,27 +1179,27 @@ applyOptions onOpts offOpts envs
       case onOpts of
         UnsetImnrsx : onOpts'
           | UnsetImnrsx `notElem` onOpts' ->
-            -- turn off i, m, n, r, s, and x, and run the rest in envs'
-            let envs' = applyOptions [] imnrsx envs
+            -- turn off i, m, n, r, s, and x, and run the rest in optsStack'
+            let optsStack' = applyOptions [] imnrsx optsStack
                 imnrsx = [CaseLess, Multiline, NoAutoCapture,
                           CaseLessNoMixAscii, SingleLine, IgnoreWS]
-            in applyOptions onOpts' offOpts envs'
+            in applyOptions onOpts' offOpts optsStack'
         _ ->
           -- the parser has already prevented this, but anyway:
           error "^ must only appear as the first option"
   -- "Unsetting x or xx unsets both", so we add the missing one. This
   -- won't get repeated, since both will be present next time.
   | IgnoreWS `elem` offOpts && IgnoreWSClasses `notElem` offOpts =
-    applyOptions onOpts (IgnoreWSClasses : offOpts) envs
+    applyOptions onOpts (IgnoreWSClasses : offOpts) optsStack
   | IgnoreWSClasses `elem` offOpts && IgnoreWS `notElem` offOpts =
-    applyOptions onOpts (IgnoreWS : offOpts) envs
-applyOptions onOpts offOpts (env : rest) =
-  env { ignoreWS        = update ignoreWS        IgnoreWS,
-        ignoreWSClasses = update ignoreWSClasses IgnoreWSClasses,
-        noAutoCapture   = update noAutoCapture   NoAutoCapture
-       } : env : rest
+    applyOptions onOpts (IgnoreWS : offOpts) optsStack
+applyOptions onOpts offOpts (opts : optsStack) =
+  opts { ignoreWS        = update ignoreWS        IgnoreWS,
+         ignoreWSClasses = update ignoreWSClasses IgnoreWSClasses,
+         noAutoCapture   = update noAutoCapture   NoAutoCapture
+       } : optsStack
   where
-    update f opt = (f env || (opt `elem` onOpts)) && (opt `notElem` offOpts)
+    update f opt = (f opts || (opt `elem` onOpts)) && (opt `notElem` offOpts)
 
 
 ------------------------------------------------------------------------------
