@@ -122,8 +122,8 @@ atom'
 
 quantifiable :: Parser Re
 quantifiable
-  =   OctOrBackRef <$> (string "\\"  *> octOrBackRefDigits) -- \\[1-9][0-9]{2}
-  <|| Esc <$> escChar
+  --  OctOrBackRef <$> (string "\\"  *> octOrBackRefDigits) -- \\[1-9][0-9]{2}
+  =   Esc <$> escChar
   <|| Ctrl <$> (string "\\c" *> printableAscii) -- \c x, printable ascii
   -- a quoting is not really quantifiable, but its last character will
   -- be quanfitied, and this is handeled by the atom parser
@@ -151,13 +151,14 @@ quoting
 
 escChar :: Parser Char
 escChar
-  =   '\a'       <$   string "\\a"                   -- \a
-  <|| '\ESC'     <$   string "\\e"                   -- \e Esc
-  <|| '\f'       <$   string "\\f"                   -- \f FF
-  <|| '\n'       <$   string "\\n"                   -- \n
-  <|| '\r'       <$   string "\\r"                   -- \r
-  <|| '\t'       <$   string "\\t"                   -- \t
-  <|| fromOctStr <$> (string "\\0" *> octDigits 0 2) -- \\0[0-7]{0,2}
+  =   '\a'       <$   string "\\a"                    -- \a
+  <|| '\ESC'     <$   string "\\e"                    -- \e Esc
+  <|| '\f'       <$   string "\\f"                    -- \f FF
+  <|| '\n'       <$   string "\\n"                    -- \n
+  <|| '\r'       <$   string "\\r"                    -- \r
+  <|| '\t'       <$   string "\\t"                    -- \t
+  <|| fromOctStr <$> (string "\\0" *> octDigits 0 2)  -- \\0[0-7]{0,2}
+  <|| fromOctStr <$> (char '\\' *> octalIfNotBackRef) -- \\[1-9][0-7]{1,2}
   <|| fromOctStr <$> (string "\\o{" *> many1 octDigit <* char '}') -- \o{[0-7]+}
   <|| fromHexStr <$> (string "\\N{U+" *> many1 hexDigit <* char '}') -- \N{U+h+}
   <|| 'U'        <$   string "\\U"                                   -- \U
@@ -166,6 +167,24 @@ escChar
   <|| fromHexStr <$> (string "\\u{" *> many1 hexDigit <* char '}')   -- \u{h+}
   <|| fromHexStr <$> (string "\\u"  *> hexDigits 4 4)                -- \uhhhh
   <|| string   "\\" *> nonAlphanumAscii -- \ non alphanum ascii
+
+octalIfNotBackRef :: Parser [Char]
+octalIfNotBackRef = do
+  gCount <- getGroupCount
+  d <- posDigit
+  input <- lift R.look
+  let ds = takeWhile isDigit input
+      allDigits = d : ds
+      octs = takeWhile isOctDigit allDigits
+      n = read allDigits :: Int
+  -- We interpret octs as octal if:
+  --  n is above the number of groups encountered so far
+  --  there is not only one digit (then it's always a backref)
+  --  there is at least one octal digit
+  if n > gCount && length allDigits /= 1 && not (null octs)
+    -- Consume the rest of the octals and return all of the octals
+    then octs <$ string (tail octs)
+    else pfail
 
 
 --                         Character types
@@ -749,6 +768,24 @@ backRef
   =   ByName   <$> refByName
   <|| Relative <$> refRelative
   <|| ByNumber <$> refByNumber
+  <|| ByNumber <$> backRefIfNotOctal
+
+backRefIfNotOctal :: StateT State R.ReadP Int
+backRefIfNotOctal = do
+  _ <- char '\\'
+  d <- posDigit
+  gCount <- getGroupCount
+  input <- lift R.look
+  let ds = takeWhile isDigit input
+      allDigits = d : ds
+      octs = takeWhile isOctDigit allDigits
+      n = read allDigits :: Int
+  -- We negate the condition for octalIfNotBackRef
+  if n > gCount && length allDigits /= 1 && not (null octs)
+    then pfail
+    -- Consume the rest of the digits and return n
+    else n <$ string ds
+
 
 refByName :: Parser String
 refByName
