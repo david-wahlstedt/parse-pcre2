@@ -268,8 +268,8 @@ data Anchor
 --                         Groups
 
 data Group
-  = Capture                                    -- (...)
-  | CaptureN Int                               -- Capture with attached number
+  = Capture Int                                -- (...) numbered
+  | Unnumbered                                 -- (...) unnumbered: (?n) active
   | NonCapture                                 -- (?:...)
   | NonCaptureOpts [InternalOpt] [InternalOpt] -- (?opts:...)
   | NonCaptureReset                            -- (?|...)

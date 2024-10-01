@@ -63,6 +63,11 @@ initialOpts = Options
 getOptions :: State -> Options
 getOptions = head . options
 
+getGroupCount :: Parser Int
+getGroupCount = do
+  s <- get
+  pure $ groupCount s
+
 modifyOptions :: ([Options] -> [Options]) -> Parser ()
 modifyOptions f = modify $ \s -> s { options = f (options s) }
 
@@ -542,8 +547,8 @@ capture = do
   s <- get
   let numberingOn = not $ noAutoCapture $ getOptions s
   when numberingOn $ modifyGroupCount (+1)
-  s' <- get
-  let gType = if numberingOn then CaptureN $ groupCount s' else Capture
+  n <- getGroupCount
+  let gType = if numberingOn then Capture n else Unnumbered
   Group gType <$> (char '(' *> alt <* char ')')
 
 nonCapture :: Parser Re
@@ -559,7 +564,26 @@ nonCaptureOpts
 
 nonCaptureReset :: Parser Re
 nonCaptureReset
-  = Group NonCaptureReset <$> (string "(?|" *> alt <* char ')')
+  = Group NonCaptureReset <$> (string "(?|" *> resetAlt <* char ')')
+
+-- Each alternative starts with the same group count, and the result
+-- count is the maximum of the alternatives counts.
+resetAlt :: Parser Re
+resetAlt = Alt <$> do
+  n <- getGroupCount
+  e <- sequencing
+  n' <- getGroupCount
+  es <- many $ resetEach n
+  modifyGroupCount (max n')
+  pure (e : es)
+
+resetEach :: Int -> Parser Re
+resetEach n = do
+  _ <- char '|'
+  modifyGroupCount (const n)
+  e <- sequencing
+  modifyGroupCount (max n)
+  pure e
 
 atomicNonCapture :: Parser Re
 atomicNonCapture
