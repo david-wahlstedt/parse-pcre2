@@ -12,7 +12,7 @@ module ParsePCRE where
 
 import Control.Monad( void, when )
 import Control.Monad.State
-    ( get, modify, evalStateT, MonadTrans(lift), StateT(..) )
+    ( get, gets, modify, evalStateT, MonadTrans(lift), StateT(..) )
 import Data.Char(chr, isDigit, isAlphaNum, isLetter, isAscii, isControl,
                  isHexDigit, isOctDigit, isPrint, isSpace, toLower)
 import qualified Data.HashMap.Strict as HM
@@ -58,22 +58,6 @@ initialOpts = Options
         noAutoCapture   = False
       }
 
--- Operations
-
-getOptions :: State -> Options
-getOptions = head . options
-
-getGroupCount :: Parser Int
-getGroupCount = do
-  s <- get
-  pure $ groupCount s
-
-modifyOptions :: ([Options] -> [Options]) -> Parser ()
-modifyOptions f = modify $ \s -> s { options = f (options s) }
-
-modifyGroupCount :: (Int -> Int) -> Parser ()
-modifyGroupCount f = modify $ \s -> s { groupCount = f (groupCount s) }
-
 
 ------------------------------------------------------------------------------
 --                     Parser monad transformer
@@ -81,7 +65,7 @@ modifyGroupCount f = modify $ \s -> s { groupCount = f (groupCount s) }
 type Parser a = StateT State R.ReadP a
 
 runParser :: State -> String -> [(Re, String)]
-runParser s input = R.readP_to_S (evalStateT (re <* eof) s) input
+runParser s = R.readP_to_S (evalStateT (re <* eof) s)
 
 
 ------------------------------------------------------------------------------
@@ -472,10 +456,8 @@ setName
 
 ccLit :: Parser Char
 ccLit = do
-  s <- get
-  let opts = getOptions s
-      xx = ignoreWSClasses opts
-  if xx
+  opts <- getOptions
+  if ignoreWSClasses opts
     then nonSpecial ([' ', '\t'] ++ ccSpecials)
     else nonSpecial ccSpecials
 
@@ -544,8 +526,8 @@ group
 
 capture :: Parser Re
 capture = do
-  s <- get
-  let numberingOn = not $ noAutoCapture $ getOptions s
+  opts <- getOptions
+  let numberingOn = not $ noAutoCapture opts
   when numberingOn $ modifyGroupCount (+1)
   n <- getGroupCount
   let gType = if numberingOn then Capture n else Unnumbered
@@ -618,18 +600,16 @@ skippable
 
 oneLineComment :: Parser String
 oneLineComment = do
-  s <- get
-  let opts = getOptions s
-      x  = ignoreWS opts
+  opts <- getOptions
+  let x  = ignoreWS opts
       xx = ignoreWSClasses opts
   if x || xx
     then char '#' *> (getUntil "\n" <|| manyTill anyChar eof)
     else pfail
 
 ignoredWS = do
-  s <- get
-  let opts = getOptions s
-      x  = ignoreWS opts
+  opts <- getOptions
+  let x  = ignoreWS opts
       xx = ignoreWSClasses opts
   if x || xx
     then "" <$ asciiWhiteSpace
@@ -648,8 +628,8 @@ ccWhitespace = satisfy (`elem` [' ', '\t'])
 -- option is active, we also skip tabs and spaces.
 ccSkippables :: Parser String
 ccSkippables = "" <$ do
-  s <- get
-  if ignoreWSClasses $ getOptions s
+  opts <- getOptions
+  if ignoreWSClasses opts
     then many (emptyQuoting <|| "" <$ ccWhitespace)
     else many emptyQuoting
 
@@ -942,9 +922,8 @@ coutStr_ open close
 
 literal :: Parser Re
 literal = Lit <$> do
-  s <- get
-  let opts = getOptions s
-      x = ignoreWS opts
+  opts <- getOptions
+  let x = ignoreWS opts
       xx = ignoreWSClasses opts
   if x || xx
     then satisfy -- # and ascii whitespace are now special
@@ -1125,16 +1104,37 @@ oneOf = foldr1 (<||)
 ------------------------------------------------------------------------------
 --                        State manipultaion
 
+-- Get options and capture group counter from the state
+
+getOptions :: Parser Options
+getOptions = gets (head . options)
+
+getGroupCount :: Parser Int
+getGroupCount = gets groupCount
+
+-- Modify capture group counter and options
+
+modifyGroupCount :: (Int -> Int) -> Parser ()
+modifyGroupCount f = modify $ \s -> s { groupCount = f (groupCount s) }
+
+modifyOptions :: ([Options] -> [Options]) -> Parser ()
+modifyOptions f = modify $ \s -> s { options = f (options s) }
+
+-- Option settings are in scope in the remaining part of the group
+-- where it appeared. We duplicate the top of the options stack and
+-- run p in it
 localOpts :: Parser a -> Parser a
 localOpts p = pushOpts *> p <* popOpts
   where
     pushOpts = modifyOptions (\opts -> head opts : opts)
     popOpts  = modifyOptions tail
 
+-- Sets given on-options and unsets the given off-options on the top
+-- of the options stack
 applyOptions :: [InternalOpt] -> [InternalOpt] -> [Options] -> [Options]
 applyOptions _ _ [] =
   error "empty state"
-applyOptions onOpts offOpts envs
+applyOptions onOpts offOpts optsStack
   | UnsetImnrsx `elem` offOpts =
       -- the parser has already prevented this, but anyway:
       error "^ must not appear after the hyphen"
@@ -1142,27 +1142,27 @@ applyOptions onOpts offOpts envs
       case onOpts of
         UnsetImnrsx : onOpts'
           | UnsetImnrsx `notElem` onOpts' ->
-            -- turn off i, m, n, r, s, and x, and run the rest in envs'
-            let envs' = applyOptions [] imnrsx envs
+            -- turn off i, m, n, r, s, and x, and run the rest in optsStack'
+            let optsStack' = applyOptions [] imnrsx optsStack
                 imnrsx = [CaseLess, Multiline, NoAutoCapture,
                           CaseLessNoMixAscii, SingleLine, IgnoreWS]
-            in applyOptions onOpts' offOpts envs'
+            in applyOptions onOpts' offOpts optsStack'
         _ ->
           -- the parser has already prevented this, but anyway:
           error "^ must only appear as the first option"
   -- "Unsetting x or xx unsets both", so we add the missing one. This
   -- won't get repeated, since both will be present next time.
   | IgnoreWS `elem` offOpts && IgnoreWSClasses `notElem` offOpts =
-    applyOptions onOpts (IgnoreWSClasses : offOpts) envs
+    applyOptions onOpts (IgnoreWSClasses : offOpts) optsStack
   | IgnoreWSClasses `elem` offOpts && IgnoreWS `notElem` offOpts =
-    applyOptions onOpts (IgnoreWS : offOpts) envs
-applyOptions onOpts offOpts (env : rest) =
-  env { ignoreWS        = update ignoreWS        IgnoreWS,
-        ignoreWSClasses = update ignoreWSClasses IgnoreWSClasses,
-        noAutoCapture   = update noAutoCapture   NoAutoCapture
-       } : env : rest
+    applyOptions onOpts (IgnoreWS : offOpts) optsStack
+applyOptions onOpts offOpts (opts : optsStack) =
+  opts { ignoreWS        = update ignoreWS        IgnoreWS,
+         ignoreWSClasses = update ignoreWSClasses IgnoreWSClasses,
+         noAutoCapture   = update noAutoCapture   NoAutoCapture
+       } : optsStack
   where
-    update f opt = (f env || (opt `elem` onOpts)) && (opt `notElem` offOpts)
+    update f opt = (f opts || (opt `elem` onOpts)) && (opt `notElem` offOpts)
 
 
 ------------------------------------------------------------------------------
