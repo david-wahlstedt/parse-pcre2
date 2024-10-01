@@ -27,7 +27,7 @@ data Re
   | Charclass Charclass
   | Anchor Anchor
   | SetStartOfMatch  -- \K set reported start of match
-  | Group Group Re
+  | Group GroupType Re
   | OptSet OptionSetting
   | ScriptRun ScriptRunMode Re
   | BackRef BackReference
@@ -267,7 +267,7 @@ data Anchor
 
 --                         Groups
 
-data Group
+data GroupType
   = Capture Int                                -- (...) numbered
   | Unnumbered                                 -- (...) unnumbered: (?n) active
   | NonCapture                                 -- (?:...)

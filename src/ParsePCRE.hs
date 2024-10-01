@@ -122,7 +122,6 @@ atom'
 
 quantifiable :: Parser Re
 quantifiable
-  --  OctOrBackRef <$> (string "\\"  *> octOrBackRefDigits) -- \\[1-9][0-9]{2}
   =   Esc <$> escChar
   <|| Ctrl <$> (string "\\c" *> printableAscii) -- \c x, printable ascii
   -- a quoting is not really quantifiable, but its last character will
@@ -806,7 +805,6 @@ refByNumber :: Parser Int
 refByNumber
   =   string  "\\g{" *> positive <* char '}'
   <|| string  "\\g"  *> positive
-  -- \\[1-9][0-9]{0,2} is handled by OctOrBackRef
 
 -- Subroutine references (possibly recursive)
 subCall :: Parser SubroutineCall
@@ -1075,9 +1073,6 @@ isAsciiWhiteSpace c = isSpace c && isAscii c
 groupNameChar :: Bool -> Parser Char
 groupNameChar isFirst
   = satisfy (\c -> not isFirst && isDigit c || isLetter c || c == '_')
-
-octOrBackRefDigits :: Parser String
-octOrBackRefDigits = (:) <$> posDigit <*> munch isDigit
 
 -- posDigit is a parser for a positive digit [1-9]
 posDigit :: Parser Char
