@@ -10,7 +10,7 @@
 
 module ParsePCRE where
 
-import Control.Monad( void )
+import Control.Monad( void, when )
 import Control.Monad.State
     ( get, modify, evalStateT, MonadTrans(lift), StateT(..) )
 import Data.Char(chr, isDigit, isAlphaNum, isLetter, isAscii, isControl,
@@ -94,7 +94,7 @@ parsePCRE input =
 --                         Basic constructs
 
 re :: Parser Re
-re = resolveOctOrBackrefs <$> alt
+re = alt
 
 alt :: Parser Re
 alt = Alt <$> sepBy1 sequencing (char '|')
@@ -139,11 +139,11 @@ quantifiable
   -- a quoting is not really quantifiable, but its last character will
   -- be quanfitied, and this is handeled by the atom parser
   <|| Quoting   <$> postCheck (not . null) quoting
-  <|| localST group
+  <|| localOpts group
   <|| scriptRun
   <|| lookAround
   <|| Chartype  <$> charType
-  <|| Cond      <$> localST conditional
+  <|| Cond      <$> localOpts conditional
   <|| Charclass <$> charClass
   <|| BackRef   <$> backRef
   <|| SubCall   <$> subCall
@@ -538,7 +538,13 @@ group
   <|| capture
 
 capture :: Parser Re
-capture = Group Capture <$> (char '(' *> alt <* char ')')
+capture = do
+  s <- get
+  let numberingOn = not $ noAutoCapture $ getOptions s
+  when numberingOn $ modifyGroupCount (+1)
+  s' <- get
+  let gType = if numberingOn then CaptureN $ groupCount s' else Capture
+  Group gType <$> (char '(' *> alt <* char ')')
 
 nonCapture :: Parser Re
 nonCapture = Group NonCapture <$>  (string "(?:" *> alt <* char ')')
@@ -1030,7 +1036,6 @@ groupNameChar :: Bool -> Parser Char
 groupNameChar isFirst
   = satisfy (\c -> not isFirst && isDigit c || isLetter c || c == '_')
 
--- see resolveOctOrBackrefs
 octOrBackRefDigits :: Parser String
 octOrBackRefDigits = (:) <$> posDigit <*> munch isDigit
 
@@ -1092,85 +1097,15 @@ oneStr = oneOf . map string
 oneOf :: [Parser a] -> Parser a
 oneOf = foldr1 (<||)
 
-------------------------------------------------------------------------------
---                      Syntax rebuild helpers
-
--- Traverse the expression, keeping track of the highest group we've
--- encountered so far, from left to right, in an in-order traversal
--- manner. The OctOrBackRef ds ocurrences are then replaced by either
--- BackRef or EOct followed by possible trailing non octal digit
--- literals, dependent on whether the highest capture group count i so
--- far: length ds == 1 || i > read ds -> BackRef; otherwise Escape EOct.
-resolveOctOrBackrefs :: Re -> Re
-resolveOctOrBackrefs e = snd $ resolveOBR 0 e
-
-resolveOBR :: Int -> Re -> (Int, Re)
-resolveOBR i (Group Capture e) =
-  Group (CaptureN i') <$> resolveOBR i' e
-  where i' = i + 1
-resolveOBR i (Group NonCaptureReset (Alt es)) =
-  let ies = map (resolveOBR i) es -- all alternatives start with i
-      (is, es') = unzip ies
-  in (maximum is, Group NonCaptureReset (Alt es'))
-resolveOBR i (OctOrBackRef ds)
-  -- The octOrBackRefDigits parser consumes as many digits ds as
-  -- available. If the decimal number n, that ds encode, is above the
-  -- highest capture group to the left, and ds has a non-empty octal
-  -- prefix, ds is considered as an octal escape of length at most 3,
-  -- followed by the rest of the digits as literals. In all other
-  -- cases ds is considered a backreference, and we don't considere
-  -- here whether the reference is too large or not. The octal
-  -- reference may also be above 0o377, and this is not allowed in
-  -- non-UTF mode. We don't take this into account in the parser.
-  | n > i && length ds /= 1 && not (null octs) =
-      (i, Seq $ Esc (fromOctStr octs) : map Lit rest)
-  | otherwise =
-      (i, BackRef $ ByNumber n)
-  where
-    n = read ds :: Int
-    (octs, rest) = span isOctDigit ds
-resolveOBR i (Alt es) =
-    let (i', es') = resolveOBRs i es
-    in (i', Alt es')
-resolveOBR i (Seq es) =
-    let (i', es') = resolveOBRs i es
-    in (i', Seq es')
-resolveOBR i (Quant m q e) =
-  Quant m q <$> resolveOBR i e
-resolveOBR i (Group g e) =
-  Group g <$> resolveOBR i e
-resolveOBR i (ScriptRun m e) =
-  ScriptRun m <$> resolveOBR i e
-resolveOBR i (Look d m e) = Look d m <$> resolveOBR i e
-resolveOBR i (Cond c) = Cond <$> resolveOBRCondl i c
-resolveOBR i e = (i,e)
-
-resolveOBRs :: Int -> [Re] -> (Int, [Re])
-resolveOBRs i [] = (i, [])
-resolveOBRs i (e:es) =
-    let (i' , e' ) = resolveOBR i e
-        (i'', es') = resolveOBRs i' es
-    in (i'', e' : es')
-
-resolveOBRCondl i (CondYes c e) =
-    let (i' , c') = resolveOBRCond i c
-    in CondYes c' <$> resolveOBR i' e
-resolveOBRCondl i (CondYesNo c e1 e2) =
-    let (i' , c') = resolveOBRCond i c
-        (i'', e1') = resolveOBR i' e1
-    in CondYesNo c' e1' <$> resolveOBR i'' e2
-
-resolveOBRCond i (Assert mc dir m e) = Assert mc dir m <$> resolveOBR i e
-resolveOBRCond i cond = (i, cond)
 
 ------------------------------------------------------------------------------
 --                        State manipultaion
 
-localST :: Parser a -> Parser a
-localST p = pushEnv *> p <* popEnv
+localOpts :: Parser a -> Parser a
+localOpts p = pushOpts *> p <* popOpts
   where
-    pushEnv = modifyOptions (\opts -> head opts : opts)
-    popEnv  = modifyOptions tail
+    pushOpts = modifyOptions (\opts -> head opts : opts)
+    popOpts  = modifyOptions tail
 
 applyOptions :: [InternalOpt] -> [InternalOpt] -> [Options] -> [Options]
 applyOptions _ _ [] =
