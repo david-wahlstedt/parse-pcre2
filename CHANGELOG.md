@@ -8,6 +8,18 @@ and this project adheres to the
 
 ## Unreleased
 
+## 0.1.0.2 - 2024-10-01
+
+### Added
+- **Use StateT to manage capture group counter**: The option `(?n)` /
+  "no auto capture", is now supported, to turn on and off capture
+  group counting, and the `(?| ... )` construction (reset group
+  counters for each alternative) is then also taken into account. This
+  is now implemented by adding a group counter to the state, along
+  with some helpers. We added the `Unnumbered` constructor to
+  `GroupType`, for capture groups in scope of the `n` option,
+  corresponding to PCRE's "Bra" tag.
+
 ## 0.1.0.1 - 2024-09-29
 
 ### Added

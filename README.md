@@ -86,10 +86,13 @@ libraries in the future.
 - **Supports dynamic option settings**: It is possible to turn on and
   off options that affect the parsing rules in arbitrary positions in
   the expression, such as `(?x)` and `(?xx)`, to ignore whitespace and
-  treat `#.*\n` as comments. Note that most of the options affect only
-  matching, and they will just be treated as syntactic constructions in
-  the resulting tree, and can be processed by the application that
-  uses our parser.
+  treat `#.*\n` as comments. We also support the `(?n)` option to turn
+  off (and on again by resetting it) capture group numbering.  The
+  `(?| ... )` construction (reset group counters for each alternative)
+  is taken into account. Note that most of PCRE's options affect only
+  matching, and will just be treated as syntactic constructions in the
+  resulting tree by our parser: it is up to the application (the user
+  of this parser) to process that further.
 
 - **No matching**: This program does not deal with the semantics of
   PCRE2 in terms of matching, only the syntax; the output of the
