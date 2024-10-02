@@ -33,7 +33,7 @@ import ParseHelpScriptName ( namesAndConsScriptName )
 
 data State = State{
   groupCount :: Int,
-  options :: [Options]
+  options :: Options
   }
   deriving Show
 
@@ -49,7 +49,7 @@ data Options = Options{
 
 initialState = State{
   groupCount = 0,
-  options = [initialOpts]
+  options = initialOpts
   }
 
 initialOpts = Options
@@ -1139,7 +1139,7 @@ oneOf = foldr1 (<||)
 -- Get options and capture group counter from the state
 
 getOptions :: Parser Options
-getOptions = gets (head . options)
+getOptions = gets options
 
 getGroupCount :: Parser Int
 getGroupCount = gets groupCount
@@ -1149,24 +1149,21 @@ getGroupCount = gets groupCount
 modifyGroupCount :: (Int -> Int) -> Parser ()
 modifyGroupCount f = modify $ \s -> s { groupCount = f (groupCount s) }
 
-modifyOptions :: ([Options] -> [Options]) -> Parser ()
+modifyOptions :: (Options -> Options) -> Parser ()
 modifyOptions f = modify $ \s -> s { options = f (options s) }
 
 -- Option settings are in scope in the remaining part of the group
--- where it appeared. We duplicate the top of the options stack and
--- run p in it
+-- where it appeared. Previous settings are restored afterwards.
 localOpts :: Parser a -> Parser a
-localOpts p = pushOpts *> p <* popOpts
-  where
-    pushOpts = modifyOptions (\opts -> head opts : opts)
-    popOpts  = modifyOptions tail
+localOpts p = do savedOptions <- getOptions
+                 r <- p
+                 modifyOptions (const savedOptions)
+                 return r
 
 -- Sets given on-options and unsets the given off-options on the top
 -- of the options stack
-applyOptions :: [InternalOpt] -> [InternalOpt] -> [Options] -> [Options]
-applyOptions _ _ [] =
-  error "empty state"
-applyOptions onOpts offOpts optsStack
+applyOptions :: [InternalOpt] -> [InternalOpt] -> Options -> Options
+applyOptions onOpts offOpts options
   | UnsetImnrsx `elem` offOpts =
       -- the parser has already prevented this, but anyway:
       error "^ must not appear after the hyphen"
@@ -1175,24 +1172,24 @@ applyOptions onOpts offOpts optsStack
         UnsetImnrsx : onOpts'
           | UnsetImnrsx `notElem` onOpts' ->
             -- turn off i, m, n, r, s, and x, and run the rest in optsStack'
-            let optsStack' = applyOptions [] imnrsx optsStack
+            let options' = applyOptions [] imnrsx options
                 imnrsx = [CaseLess, Multiline, NoAutoCapture,
                           CaseLessNoMixAscii, SingleLine, IgnoreWS]
-            in applyOptions onOpts' offOpts optsStack'
+            in applyOptions onOpts' offOpts options'
         _ ->
           -- the parser has already prevented this, but anyway:
           error "^ must only appear as the first option"
   -- "Unsetting x or xx unsets both", so we add the missing one. This
   -- won't get repeated, since both will be present next time.
   | IgnoreWS `elem` offOpts && IgnoreWSClasses `notElem` offOpts =
-    applyOptions onOpts (IgnoreWSClasses : offOpts) optsStack
+    applyOptions onOpts (IgnoreWSClasses : offOpts) options
   | IgnoreWSClasses `elem` offOpts && IgnoreWS `notElem` offOpts =
-    applyOptions onOpts (IgnoreWS : offOpts) optsStack
-applyOptions onOpts offOpts (opts : optsStack) =
+    applyOptions onOpts (IgnoreWS : offOpts) options
+applyOptions onOpts offOpts opts =
   opts { ignoreWS        = update ignoreWS        IgnoreWS,
          ignoreWSClasses = update ignoreWSClasses IgnoreWSClasses,
          noAutoCapture   = update noAutoCapture   NoAutoCapture
-       } : optsStack
+       }
   where
     update f opt = (f opts || (opt `elem` onOpts)) && (opt `notElem` offOpts)
 
