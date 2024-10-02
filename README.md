@@ -162,6 +162,7 @@ working parser, and that seems to be the case!
 
 ## Acknowledgments
 
-Special thanks to @Thomas-H, for some nice simplifying contributions
-and discussion! Also thanks to @bengtj100 for earlier discussions and
+Special thanks to [@Thomas-H](https://github.com/Thomas-H), for some
+nice simplifying contributions and discussion! Also thanks to
+[@bengtj100](https://github.com/bengtj100) for earlier discussions and
 feedback!
