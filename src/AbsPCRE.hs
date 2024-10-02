@@ -15,27 +15,27 @@ import AbsScriptName
 --                         Basic constructs
 
 data Re
-  = Alt [Re] -- |
-  | Seq [Re] -- juxtaposition
-  | Quant QuantifierMode Quantifier Re
-  | Lit Char
-  | Quoting String -- \Q <anything without \E> \E
-  | OctOrBackRef String -- \[1-7]{1,3}
-  | Esc  Char
-  | Ctrl Char
-  | Chartype Chartype
-  | Charclass Charclass
-  | Anchor Anchor
-  | SetStartOfMatch  -- \K set reported start of match
-  | Group GroupType Re
-  | OptSet OptionSetting
-  | ScriptRun ScriptRunMode Re
-  | BackRef BackReference
-  | SubCall SubroutineCall
-  | Look Direction LookaroundMode Re
-  | Cond Conditional
-  | Backtrack BacktrackControl
-  | COut Callout
+  = Alt [Re]                           -- alternation: |
+  | Seq [Re]                           -- sequencing: juxtaposition
+  | Lit Char                           -- character literals
+  | Quoting String                     -- \Q <anything without \E> \E
+  | Ctrl Char                          -- Ctrl-C, etc
+  | Esc  Char                          -- Escaped characters
+  | Chartype Chartype                  -- character types and properties
+  | Charclass Charclass                -- character classes
+  | Quant QuantifierMode Quantifier Re -- quantifiers
+  | Anchor Anchor                      -- anchors and simple assertions
+  | SetStartOfMatch                    -- \K, reported match point setting
+  | Group GroupType Re                 -- capture and non-capture groups
+  | OptSet OptionSetting               -- option settings and newline conventions
+  | Look Direction LookaroundMode Re   -- lookaround
+  | SubScan [GroupId] Re               -- substring scan assertion
+  | ScriptRun ScriptRunMode Re         -- script runs
+  | BackRef GroupId                    -- back references
+  | SubCall SubroutineCall             -- subroutine calls
+  | Cond Conditional                   -- conditional patterns
+  | Backtrack BacktrackControl         -- backtracking control
+  | COut Callout                       -- callouts
   deriving Show
 
 
@@ -361,7 +361,7 @@ data ScriptRunMode
 
 --               Backreferences and subroutine calls
 
-data BackReference
+data GroupId
   = ByNumber Int  -- \n, \gn, \g{n}
   | Relative Int  -- \g+n, \g-n, \g{+n}, \g{-n}
   | ByName String

@@ -132,6 +132,7 @@ quantifiable
   <|| lookAround
   <|| Chartype  <$> charType
   <|| Cond      <$> localOpts conditional
+  <|| localOpts subScan
   <|| Charclass <$> charClass
   <|| BackRef   <$> backRef
   <|| SubCall   <$> subCall
@@ -762,29 +763,12 @@ lookAround
 
 --               Backreferences and subroutine calls
 
-backRef :: Parser BackReference
+backRef :: Parser GroupId
 backRef
   =   ByName   <$> refByName
   <|| Relative <$> refRelative
   <|| ByNumber <$> refByNumber
   <|| ByNumber <$> backRefIfNotOctal
-
-backRefIfNotOctal :: StateT State R.ReadP Int
-backRefIfNotOctal = do
-  _ <- char '\\'
-  d <- posDigit
-  gCount <- getGroupCount
-  input <- lift R.look
-  let ds = takeWhile isDigit input
-      allDigits = d : ds
-      octs = takeWhile isOctDigit allDigits
-      n = read allDigits :: Int
-  -- We negate the condition for octalIfNotBackRef
-  if n > gCount && length allDigits /= 1 && not (null octs)
-    then pfail
-    -- Consume the rest of the digits and return n
-    else n <$ string ds
-
 
 refByName :: Parser String
 refByName
@@ -805,6 +789,22 @@ refByNumber :: Parser Int
 refByNumber
   =   string  "\\g{" *> positive <* char '}'
   <|| string  "\\g"  *> positive
+
+backRefIfNotOctal :: StateT State R.ReadP Int
+backRefIfNotOctal = do
+  _ <- char '\\'
+  d <- posDigit
+  gCount <- getGroupCount
+  input <- lift R.look
+  let ds = takeWhile isDigit input
+      allDigits = d : ds
+      octs = takeWhile isOctDigit allDigits
+      n = read allDigits :: Int
+  -- We negate the condition for octalIfNotBackRef
+  if n > gCount && length allDigits /= 1 && not (null octs)
+    then pfail
+    -- Consume the rest of the digits and return n
+    else n <$ string ds
 
 -- Subroutine references (possibly recursive)
 subCall :: Parser SubroutineCall
@@ -887,6 +887,23 @@ condition
         <*>
         (string "?<!"  *> alt)
 
+--                     Substring scan assertion
+
+-- (*scan_substring:(grouplist)...)  scan captured substring
+-- (*scs:(grouplist)...)             scan captured substring
+
+subScan :: Parser Re
+subScan = SubScan <$>
+          ((string "(*scan_substring:(" <|| string "(*scs:(") *>
+           sepBy groupRef (char ',') <* char ')') <*> alt <* char ')'
+
+groupRef :: Parser GroupId
+groupRef
+  =   ByNumber <$> positive
+  <|| Relative <$> (char '+' *> positive)
+  <|| Relative . negate <$> (char '-' *> positive)
+  <|| ByName <$> (char '\'' *> groupName <* char '\'')
+  <|| ByName <$> (char '<' *> groupName <* char '>')
 
 --                           Script runs
 
