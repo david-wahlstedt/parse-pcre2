@@ -159,3 +159,9 @@ working parser, and that seems to be the case!
 - **Module headers**: There are no export lists, and a lot of
   suppressed warnings. This is for convenience, and should perhaps be
   changed.
+
+## Acknowledgments
+
+Special thanks to @Thomas-H, for some nice simplifying contributions
+and discussion! Also thanks to @bengtj100 for earlier discussions and
+feedback!
