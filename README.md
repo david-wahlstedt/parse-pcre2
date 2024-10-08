@@ -1,7 +1,11 @@
 # parse-pcre2
 
 This is an implementation of a PCRE2 (v 10.45) parser, using
-Text.ParserCombinators.ReadP.
+Text.ParserCombinators.ReadP. The syntactic rules are based on the man
+pages
+[pcre2syntax](https://pcre2project.github.io/pcre2/doc/html/pcre2syntax.html)
+and
+[pcre2pattern](https://pcre2project.github.io/pcre2/doc/html/pcre2pattern.html).
 
 It exports a function `parsePCRE` that produces an abstract syntax
 tree given a correct PCRE2 pattern.
@@ -51,62 +55,56 @@ or for files with several lines, one regex each:
 while IFS= read -r line || [ -n "$line" ]; do printf "%s" "$line" | parse-pcre2; done < examples/quoting.txt
 ```
 
-## Why a PCRE2 parser in Haskell?
+## Why Build a PCRE2 Parser in Haskell?
 
-In fact, I wanted to write a Haskell program that produces random
-strings that match a given PCRE2 expression, a bit like
-[genex](https://hackage.haskell.org/package/regex-genex-0.7.0), but
-for PCRE2. That requires a parser!
+Most applications use regular expressions to match patterns in
+strings. However, there are cases where one might want to analyze the
+regular expression itself for various purposes.
 
-The Haskell regular expressions
-[page](https://wiki.haskell.org/Regular_expressions) has an overview
-of regex support, and includes C bindings to PCRE. However, the PCRE2
-C library doesn't have any function that returns an abstract syntax
-tree, in the sense one is used to in functional programming. As far as
-I am aware, there is no program or library available that just takes a
-PCRE2 expression and returns an abstract syntax tree. There is an
-[ANTLR4 grammar for
-PCRE](https://github.com/antlr/grammars-v4/blob/master/pcre/PCRE.g4),
-but it is not complete, and does not support parsing sensitive to
-option settings.
+In my case, I wanted to create a Haskell program that generates random
+strings matching a given PCRE2 expression—similar to
+[regex-genex](https://hackage.haskell.org/package/regex-genex-0.7.0),
+but specifically for PCRE2. To do that, building a PCRE2 parser seemed
+like a natural first step.
 
-
-
-However, we haven't found any parser covering the whole PCRE2
-language. We may try to connect this parser with some of the existing
-libraries in the future.
+The Haskell Regular Expressions
+[page](https://wiki.haskell.org/Regular_expressions) provides an
+overview of regex support, including C bindings for PCRE. However, the
+PCRE2 C library doesn't offer a function that returns an abstract
+syntax tree (AST) in a way that’s common in functional programming. As
+far as I know, no available tool or library can take a PCRE2
+expression and return such an AST. While there is an ANTLR4 grammar
+for PCRE, it doesn’t account for option-sensitive parsing.
 
 ## Features
 
-- **Complete PCRE2 syntax**: The parser supports all of PCRE2's syntax
-  (with some exceptions regarding the semantics of some option
-  settings, and how character encodings are treated, which is work in
-  progress).
+- **Almost Complete PCRE2 Syntax**: The parser supports all of PCRE2’s
+  syntax, with only a few exceptions related to option sensitivity
+  (such as `ALT_BSUX` for ECMAScript compatibility) and non-UTF-8
+  character encoding handling.
 
-- **Supports dynamic option settings**: It is possible to turn on and
-  off options that affect the parsing rules in arbitrary positions in
-  the expression, such as `(?x)` and `(?xx)`, to ignore whitespace and
-  treat `#.*\n` as comments. We also support the `(?n)` option to turn
-  off (and on again by resetting it) capture group numbering.  The
-  `(?| ... )` construction (reset group counters for each alternative)
-  is taken into account. Note that most of PCRE's options affect only
-  matching, and will just be treated as syntactic constructions in the
-  resulting tree by our parser: it is up to the application (the user
-  of this parser) to process that further.
+- **Dynamic option support**: Options like `(?x)` and `(?xx)` that
+  affect parsing---such as ignoring whitespace and treating `#.*\n` as
+  comments---can be toggled on and off at any point in the
+  expression. The parser also supports the `(?n)` option to turn off
+  capture group numbering, and correctly handles the `(?| ... )`
+  construction, which resets group counters for each alternative
+  inside it. While most PCRE options affect matching rather than
+  syntax, our parser treats these options syntactically, leaving it up
+  to the user to handle their semantics.
 
-- **No matching**: This program does not deal with the semantics of
-  PCRE2 in terms of matching, only the syntax; the output of the
-  parser is just a syntax tree.
+- **No matching functionality**: This parser only deals with PCRE2
+  syntax. It produces a syntax tree without addressing the semantics
+  of regex matching.
 
-- **Forgiving syntax** Some options for PCRE2 that controls, for
-  instance, whether or not to allow empty character classes, are
-  always on, but this may change in future versions. In short, some
-  features of PCRE2 that forbids certain constructions due to
-  semantics, are allowed in our parser, and the idea is that the
-  application can take care of it. Another example is character
-  classes: The expression `[z-a]` is allowed, and yields a range from
-  `z` to `a`, which is not allowed by PCRE2. It is up to the
-  application to deal with that.
+- **Lenient syntax handling**: Some PCRE2 options---like those that
+  control whether empty character classes are allowed---are always
+  enabled in this parser (this behavior might change in future
+  versions). In short, the parser allows some constructs that are
+  semantically invalid but still generates a tree for them. For
+  instance, the character class `[z-a]` is accepted and produces a
+  range from `z` to `a`, even though this is not allowed by
+  PCRE2. It’s up to the user to handle such cases appropriately.
 
 ## PCRE2 sample expressions
 
@@ -131,34 +129,32 @@ Some examples (under directories with names containing substring
 
 ## Some remarks on the code:
 
-There is certainly room for improvement in the code, from a functional
-programming point of view. The current version (as of 2024-08-16) does
-not contain any innovations or particularly interesting parts, when it
-comes to functional programming per se: the main goal was to have a
-working parser, and that seems to be the case!
+Our main objective was to develop a functional parser and make it
+resemble a grammar as closely as possible. The code largely follows
+the principles of the ["Simple Haskell"](https://www.simplehaskell.org/)
+initiative. There is certainly room for improvement!
 
-- **Abstract syntax**: The current abstract syntax is somewhat a
-  middle ground between two extremes: 1) retaining all information
-  necessary to reconstruct the input PCRE2 pattern exactly as it was
-  given, and 2) keeping the minimal amount of information necessary to
-  match the same set of strings as the given PCRE2 expression
-  matches. The reason for this is a bit arbitrary: it is the first
-  that came into mind. We would like the constructors to be self
-  documenting, but also not too long. Some of the constructors are
-  just copies of the corresponding PCRE2 counterparts, like Unicode
-  script names, where others try to convey what they do, like `Many`
-  for `*`, `Many1` for `+`, and `RepMin Int` for the `{,N}`
-  quantifier. Some of the constructors could perhaps be better as
-  records, for instance for character class or lookaround, that have
-  different properties such as being positive/negative,
-  forward/behind, etc.
+- **Abstract Syntax**: The current abstract syntax reflects my
+  position between two goals, based on initial intuition: 1) retaining
+  all the information necessary to reconstruct the exact input PCRE2
+  pattern, and 2) maintaining only the minimal information required to
+  match the same set of strings as the original expression. We aim for
+  the constructors to be self-documenting but not overly verbose. Some
+  constructors mirror their PCRE2 counterparts (like Unicode script
+  names), while others simplify their intent, such as Many for *,
+  Many1 for +, and RepMin Int for the {,N} quantifier. Certain
+  constructs, such as character classes or lookaround, could
+  potentially benefit from being records, to better express properties
+  like positive/negative and forward/behind.
 
-- **Higher level functional programming**: Not so much. We have a
-  monad transformer that handles state and parsing, though.
+- **No Lexical analysis**: Currently, the parser operates directly on
+  characters, but we believe it may be beneficial to refactor it to
+  include an initial lexical analysis pass.
 
-- **Module headers**: There are no export lists, and a lot of
-  suppressed warnings. This is for convenience, and should perhaps be
-  changed.
+- **Module Headers**: There are currently no export lists, and several
+  warnings have been suppressed for convenience. These are practical
+  decisions, though they could be revisited in future versions for
+  cleaner and more robust module design.
 
 ## Acknowledgments
 
