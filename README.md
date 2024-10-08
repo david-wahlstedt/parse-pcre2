@@ -71,9 +71,10 @@ The Haskell Regular Expressions
 [page](https://wiki.haskell.org/Regular_expressions) provides an
 overview of regex support, including C bindings for PCRE. However, the
 PCRE2 C library doesn't offer a function that returns an abstract
-syntax tree (AST) in a way that’s common in functional programming. As
-far as I know, no available tool or library can take a PCRE2
-expression and return such an AST. While there is an ANTLR4 grammar
+syntax tree (AST) suitable for functional programming. As far as I
+know, no available tool or library can take a PCRE2 expression and
+return such an AST. While there is an [ANTLR4
+grammar](https://github.com/antlr/grammars-v4/blob/master/pcre/PCRE.g4)
 for PCRE, it doesn’t account for option-sensitive parsing.
 
 ## Features
@@ -84,8 +85,8 @@ for PCRE, it doesn’t account for option-sensitive parsing.
   character encoding handling.
 
 - **Dynamic option support**: Options like `(?x)` and `(?xx)` that
-  affect parsing---such as ignoring whitespace and treating `#.*\n` as
-  comments---can be toggled on and off at any point in the
+  affect parsing—such as ignoring whitespace and treating `#.*\n` as
+  comments—can be toggled on and off at any point in the
   expression. The parser also supports the `(?n)` option to turn off
   capture group numbering, and correctly handles the `(?| ... )`
   construction, which resets group counters for each alternative
@@ -97,8 +98,8 @@ for PCRE, it doesn’t account for option-sensitive parsing.
   syntax. It produces a syntax tree without addressing the semantics
   of regex matching.
 
-- **Lenient syntax handling**: Some PCRE2 options---like those that
-  control whether empty character classes are allowed---are always
+- **Lenient syntax handling**: Some PCRE2 options—like those that
+  control whether empty character classes are allowed—are always
   enabled in this parser (this behavior might change in future
   versions). In short, the parser allows some constructs that are
   semantically invalid but still generates a tree for them. For
