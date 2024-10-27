@@ -14,6 +14,9 @@ import AbsScriptName
 
 --                         Basic constructs
 
+data TopLevelRe = TopLevelRe [GlobalOption] Re
+  deriving Show
+
 data Re
   = Alt [Re]                           -- alternation: |
   | Seq [Re]                           -- sequencing: juxtaposition
@@ -27,7 +30,7 @@ data Re
   | Anchor Anchor                      -- anchors and simple assertions
   | SetStartOfMatch                    -- \K, reported match point setting
   | Group GroupType Re                 -- capture and non-capture groups
-  | OptSet OptionSetting               -- option settings and newline conventions
+  | OptSet [ScopedOption] [ScopedOption] -- scoped option settings
   | Look Direction LookaroundMode Re   -- lookaround
   | SubScan [GroupId] Re               -- substring scan assertion
   | ScriptRun ScriptRunMode Re         -- script runs
@@ -268,24 +271,19 @@ data Anchor
 --                         Groups
 
 data GroupType
-  = Capture Int                                -- (...) numbered
-  | Unnumbered                                 -- (...) unnumbered: (?n) active
-  | NonCapture                                 -- (?:...)
-  | NonCaptureOpts [InternalOpt] [InternalOpt] -- (?opts:...)
-  | NonCaptureReset                            -- (?|...)
-  | AtomicNonCapture                           -- (?>...)
-  | NamedCapture String                        -- (?<name>...)
+  = Capture Int                                  -- (...) numbered
+  | Unnumbered                                   -- (...) unnumbered: (?n) set
+  | NonCapture                                   -- (?:...)
+  | NonCaptureOpts [ScopedOption] [ScopedOption] -- (?opts:...)
+  | NonCaptureReset                              -- (?|...)
+  | AtomicNonCapture                             -- (?>...)
+  | NamedCapture String                          -- (?<name>...)
   deriving Show
 
 
 --                          Option setting
 
-data OptionSetting
-  = StartOpt StartOpt  -- (*...)
-  | InternalOpts [InternalOpt] [InternalOpt] -- (?opt+) | (?opt*-opt*)
-  deriving Show
-
-data StartOpt
+data GlobalOption
   = LimitDepth Int  -- (*LIMIT_DEPTH=d)
   | LimitHeap  Int  -- (*LIMIT_HEAP=d)
   | LimitMatch Int  -- (*LIMIT_MATCH=d)
@@ -312,7 +310,7 @@ data StartOpt
   | BsrUnicode      -- (*BSR_UNICODE)  any Unicode newline sequence
   deriving Show
 
-data InternalOpt
+data ScopedOption
   = AllAscii       -- (?a)  all ASCII options
   | UCPAsciiD      -- (?aD) restrict \d to ASCII in UCP mode
   | UCPAsciiS      -- (?aS) restrict \s to ASCII in UCP mode

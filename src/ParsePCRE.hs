@@ -60,30 +60,31 @@ initialOpts = Options
 
 
 ------------------------------------------------------------------------------
---                     Parser monad transformer
-
-type Parser a = StateT State R.ReadP a
-
-runParser :: State -> String -> [(Re, String)]
-runParser s = R.readP_to_S (evalStateT (re <* eof) s)
-
-
-------------------------------------------------------------------------------
---                            PCRE2 Parsers
-
 --                        Parser entrypoint
 
-parsePCRE :: String -> Maybe Re
+parsePCRE :: String -> Maybe TopLevelRe
 parsePCRE input =
   case runParser initialState input of
     (result, "") : _ -> Just result
     _                -> Nothing
 
+------------------------------------------------------------------------------
+--                     Parser monad transformer
+
+type Parser a = StateT State R.ReadP a
+
+runParser :: State -> String -> [(TopLevelRe, String)]
+runParser s = R.readP_to_S (evalStateT (topLevelRe <* eof) s)
+
+
+------------------------------------------------------------------------------
+--                            PCRE2 Parsers
+
 
 --                         Basic constructs
 
-re :: Parser Re
-re = alt
+topLevelRe :: Parser TopLevelRe
+topLevelRe = TopLevelRe <$> many globalOption <*> alt
 
 alt :: Parser Re
 alt = Alt <$> sepBy1 sequencing (char '|')
@@ -100,8 +101,8 @@ atom'
   <|| (\e q m -> quantify m e q) <$> quantifiable <*> quantifier <*> quantMode
   <|| quantify Greedy <$> quantifiable <*> quantifier
   <|| quantifiable
-  <|| SetStartOfMatch <$ string "\\K"
-  <|| OptSet    <$> optionSetting
+  <|| SetStartOfMatch <$  string "\\K"
+  <|| uncurry OptSet  <$> scopedOptions
   <|| Backtrack <$> backtrackControl
   <|| COut      <$> callout
   where quantify mode e q
@@ -559,9 +560,9 @@ nonCapture = Group NonCapture <$>  (string "(?:" *> alt <* char ')')
 nonCaptureOpts :: Parser Re
 nonCaptureOpts
   = mkGroup <$>
-    (string "(?" *> (internalOpts <* char ':')) <*> alt <* char ')'
+    (string "(?" *> (scopedOpts <* char ':')) <*> alt <* char ')'
   where
-    mkGroup (InternalOpts ons offs) = Group (NonCaptureOpts ons offs)
+    mkGroup (ons, offs) = Group (NonCaptureOpts ons offs)
 
 nonCaptureReset :: Parser Re
 nonCaptureReset
@@ -662,15 +663,14 @@ stripCCSkippables (c : cs)
 
 --                          Option setting
 
-optionSetting :: Parser OptionSetting
-optionSetting
-  =   StartOpt <$> (string "(*" *> startOpt <* char ')')
-  <|| string "(?" *> internalOpts  <* char ')'
+-- Global options
 
--- Non internal options
+globalOption :: Parser GlobalOption
+globalOption
+  =   string "(*" *> globalOpt <* char ')'
 
-startOpt :: Parser StartOpt
-startOpt
+globalOpt :: Parser GlobalOption
+globalOpt
   =   LimitDepth <$ string "LIMIT_DEPTH="     <*> natural
   <|| LimitDepth <$ string "LIMIT_RECURSION=" <*> natural
   <|| LimitHeap  <$ string "LIMIT_HEAP="      <*> natural
@@ -697,28 +697,31 @@ startOpt
   <|| BsrAnycrlf <$ string "BSR_ANYCRLF"
   <|| BsrUnicode <$ string "BSR_UNICODE"
 
--- Internal options
+-- Scoped options
 
-internalOpts :: Parser OptionSetting
-internalOpts = do
+scopedOptions :: Parser ([ScopedOption], [ScopedOption])
+scopedOptions = string "(?" *> scopedOpts  <* char ')'
+
+scopedOpts :: Parser ([ScopedOption], [ScopedOption])
+scopedOpts = do
   (onOpts, offOpts) <- optionsOnOff
   modifyOptions (applyOptions onOpts offOpts)
-  pure (InternalOpts onOpts offOpts)
+  pure (onOpts, offOpts)
 
-optionsOnOff :: Parser ([InternalOpt], [InternalOpt])
+optionsOnOff :: Parser ([ScopedOption], [ScopedOption])
 optionsOnOff
   =   postCheck noImnrsx
-      ((,) <$> (many internalOpt <* char '-') <*> many internalOpt)
+      ((,) <$> (many scopedOption <* char '-') <*> many scopedOption)
   <|| postCheck (imnrsxFirst . fst)
-      ((,[]) <$> many internalOpt)
+      ((,[]) <$> many scopedOption)
   where
     -- The ^ option may only occur first, and without hyphen
     noImnrsx (ons, offs) = all (UnsetImnrsx `notElem`) [ons, offs]
     imnrsxFirst (UnsetImnrsx : ons) = UnsetImnrsx `notElem` ons
     imnrsxFirst ons = UnsetImnrsx `notElem` ons
 
-internalOpt :: Parser InternalOpt
-internalOpt
+scopedOption :: Parser ScopedOption
+scopedOption
   =   CaseLess           <$ string  "i"
   <|| AllowDupGrp        <$ string  "J"
   <|| Multiline          <$ string  "m"
@@ -1179,7 +1182,7 @@ localOpts p = do savedOptions <- getOptions
 
 -- Sets given on-options and unsets the given off-options on the top
 -- of the options stack
-applyOptions :: [InternalOpt] -> [InternalOpt] -> Options -> Options
+applyOptions :: [ScopedOption] -> [ScopedOption] -> Options -> Options
 applyOptions onOpts offOpts options
   | UnsetImnrsx `elem` offOpts =
       -- the parser has already prevented this, but anyway:
