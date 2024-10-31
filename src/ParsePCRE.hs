@@ -87,10 +87,10 @@ topLevelRe :: Parser TopLevelRe
 topLevelRe = TopLevelRe <$> many globalOption <*> alt
 
 alt :: Parser Re
-alt = Alt <$> sepBy1 sequencing (char '|')
+alt = pruneSingleton Alt <$> sepBy1 sequencing (char '|')
 
 sequencing :: Parser Re
-sequencing = Seq <$> (skippables *> many atom)
+sequencing = pruneSingleton Seq <$> (skippables *> many atom)
 
 atom :: Parser Re
 atom = atom' <* skippables
@@ -571,7 +571,7 @@ nonCaptureReset
 -- Each alternative starts with the same group count, and the result
 -- count is the maximum of the alternatives counts.
 resetAlt :: Parser Re
-resetAlt = Alt <$> do
+resetAlt = pruneSingleton Alt <$> do
   n <- getGroupCount
   e <- sequencing
   n' <- getGroupCount
@@ -1216,6 +1216,12 @@ applyOptions onOpts offOpts opts =
 
 ------------------------------------------------------------------------------
 --                           Misc helpers
+
+-- For Alt and Seq, if the list is singleton, use the underlying
+-- expression instead.
+pruneSingleton :: ([Re] -> Re) -> [Re] -> Re
+pruneSingleton _ [e] = e
+pruneSingleton constr es = constr es
 
 -- Helper to create a an association list of property names generated
 -- from pcre2test -LP and -LS.
