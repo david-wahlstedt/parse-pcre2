@@ -14,31 +14,29 @@ import AbsScriptName
 
 --                         Basic constructs
 
-data TopLevelRe = TopLevelRe [GlobalOption] Re
-  deriving Show
-
 data Re
-  = Alt [Re]                           -- alternation: |
-  | Seq [Re]                           -- sequencing: juxtaposition
-  | Lit Char                           -- character literals
-  | Quoting String                     -- \Q <anything without \E> \E
-  | Ctrl Char                          -- Ctrl-C, etc
-  | Esc  Char                          -- Escaped characters
-  | Chartype Chartype                  -- character types and properties
-  | Charclass Charclass                -- character classes
-  | Quant QuantifierMode Quantifier Re -- quantifiers
-  | Anchor Anchor                      -- anchors and simple assertions
-  | SetStartOfMatch                    -- \K, reported match point setting
-  | Group GroupType Re                 -- capture and non-capture groups
-  | OptSet [ScopedOption] [ScopedOption] -- scoped option settings
-  | Look Direction LookaroundMode Re   -- lookaround
-  | SubScan [GroupId] Re               -- substring scan assertion
-  | ScriptRun ScriptRunMode Re         -- script runs
-  | BackRef GroupId                    -- back references
-  | SubCall SubroutineCall             -- subroutine calls
-  | Cond Conditional                   -- conditional patterns
-  | Backtrack BacktrackControl         -- backtracking control
-  | COut Callout                       -- callouts
+  = Alt [Re]                                   -- alternation: |
+  | Seq [Re]                                   -- sequencing: juxtaposition
+  | Lit Char                                   -- character literals
+  | Quoting String                             -- \Q <anything without \E> \E
+  | Ctrl Char                                  -- Ctrl-C, etc
+  | Esc  Char                                  -- Escaped characters
+  | Chartype Chartype                          -- character types and properties
+  | Charclass Charclass                        -- character classes
+  | Quant QuantifierMode Quantifier Re         -- quantifiers
+  | Anchor Anchor                              -- anchors and simple assertions
+  | SetStartOfMatch                            -- \K, reported match pt setting
+  | Group GroupType Re                         -- capture and non-capture groups
+  | GlobalOptSet [GlobalOption] Re             -- global option settings
+  | ScopedOptSet [ScopedOption] [ScopedOption] -- scoped option settings
+  | Look Direction LookaroundMode Re           -- lookaround
+  | SubScan [GroupId] Re                       -- substring scan assertion
+  | ScriptRun ScriptRunMode Re                 -- script runs
+  | BackRef GroupId                            -- back references
+  | SubCall SubroutineCall                     -- subroutine calls
+  | Cond Conditional                           -- conditional patterns
+  | Backtrack BacktrackControl                 -- backtracking control
+  | Callout Callout                            -- callouts
   deriving Show
 
 
@@ -428,7 +426,7 @@ data BacktrackControl
 --                             Callouts
 
 data Callout
-  = Callout         -- (?C)       callout (assumed number 0)
-  | CalloutN Int    -- (?Cn)      callout with numerical data n
-  | CalloutS String -- (?C"text") callout with string data
+  = COZero       -- (?C)       callout (assumed number 0)
+  | CONum Int    -- (?Cn)      callout with numerical data n
+  | COStr String -- (?C"text") callout with string data
   deriving Show

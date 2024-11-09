@@ -62,7 +62,7 @@ initialOpts = Options
 ------------------------------------------------------------------------------
 --                        Parser entrypoint
 
-parsePCRE :: String -> Maybe TopLevelRe
+parsePCRE :: String -> Maybe Re
 parsePCRE input =
   case runParser initialState input of
     (result, "") : _ -> Just result
@@ -73,8 +73,8 @@ parsePCRE input =
 
 type Parser a = StateT State R.ReadP a
 
-runParser :: State -> String -> [(TopLevelRe, String)]
-runParser s = R.readP_to_S (evalStateT (topLevelRe <* eof) s)
+runParser :: State -> String -> [(Re, String)]
+runParser s = R.readP_to_S (evalStateT (topLevel <* eof) s)
 
 
 ------------------------------------------------------------------------------
@@ -83,8 +83,10 @@ runParser s = R.readP_to_S (evalStateT (topLevelRe <* eof) s)
 
 --                         Basic constructs
 
-topLevelRe :: Parser TopLevelRe
-topLevelRe = TopLevelRe <$> many globalOption <*> alt
+topLevel :: Parser Re
+topLevel
+  =   GlobalOptSet <$> many1 globalOption <*> alt
+  <|| alt
 
 alt :: Parser Re
 alt = pruneSingleton Alt <$> sepBy1 sequencing (char '|')
@@ -97,15 +99,16 @@ atom = atom' <* skippables
 
 atom' :: Parser Re
 atom'
-  =   Anchor    <$> anchor
-  <|| (\e q m -> quantify m e q) <$> quantifiable <*> quantifier <*> quantMode
-  <|| quantify Greedy <$> quantifiable <*> quantifier
+  =   Anchor               <$> anchor
+  <|| rotArgs quantify     <$> quantifiable <*> quantifier <*> quantMode
+  <|| quantify Greedy      <$> quantifiable <*> quantifier
   <|| quantifiable
-  <|| SetStartOfMatch <$  string "\\K"
-  <|| uncurry OptSet  <$> scopedOptions
-  <|| Backtrack <$> backtrackControl
-  <|| COut      <$> callout
-  where quantify mode e q
+  <|| SetStartOfMatch      <$  string "\\K"
+  <|| uncurry ScopedOptSet <$> scopedOptions
+  <|| Backtrack            <$> backtrackControl
+  <|| Callout              <$> callout
+  where rotArgs f a b c = f c a b
+        quantify mode e q
           = case splitQuoting e of
               Just (cs, c) ->
                 -- we quantify on the last character
@@ -948,9 +951,9 @@ callout
 
 calloutBody :: Parser Callout
 calloutBody
-  =   (CalloutN <$> (string "C" *> natural)) -- (?Cn) with numerical data n
-  <|| (CalloutS <$> (string "C" *> coutStr)) -- (?C"text") with string data
-  <|| (Callout  <$  string "C")              -- (?C) (assumed number 0)
+  =   (CONum  <$> (string "C" *> natural)) -- (?Cn) with numerical data n
+  <|| (COStr  <$> (string "C" *> coutStr)) -- (?C"text") with string data
+  <|| (COZero <$   string "C")             -- (?C) (assumed number 0)
 
 -- delimiters: ` ' " ^ % # $ and { }
 coutStr :: Parser String
