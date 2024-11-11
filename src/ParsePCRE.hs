@@ -109,6 +109,7 @@ atom'
   <|| Callout              <$> callout
   where rotArgs f a b c = f c a b
         quantify mode e q
+          -- Handle quantifier after non-empty \Q ... \E block:
           = case splitQuoting e of
               Just (cs, c) ->
                 -- we quantify on the last character
@@ -120,8 +121,8 @@ atom'
         splitQuoting (Quoting "") = Nothing
         splitQuoting (Quoting cs) = Just (init cs, last cs)
         -- singleton sequence or alternation: descend
-        splitQuoting (Seq [e']) = splitQuoting e'
-        splitQuoting (Alt [e']) = splitQuoting e'
+        splitQuoting (Seq [e]) = splitQuoting e
+        splitQuoting (Alt [e]) = splitQuoting e
         splitQuoting _ = Nothing
 
 quantifiable :: Parser Re
@@ -630,6 +631,7 @@ oneLineComment = do
     then char '#' *> (getUntil "\n" <|| manyTill anyChar eof)
     else pfail
 
+ignoredWS :: Parser String
 ignoredWS = do
   opts <- getOptions
   let x  = ignoreWS opts
@@ -645,6 +647,7 @@ emptyQuoting
 
 -- Character class skippables
 
+ccWhitespace :: Parser Char
 ccWhitespace = satisfy (`elem` [' ', '\t'])
 
 -- Strips away zero or more empty quotings. If the xx
@@ -1240,5 +1243,8 @@ charclassCase fOneof fNoneof charclass =
     Oneof  items -> fOneof  items
     Noneof items -> fNoneof items
 
+fromOctStr :: String -> Char
 fromOctStr = chr . fst . head . readOct . ("0" <>)
+
+fromHexStr :: String -> Char
 fromHexStr = chr . fst . head . readHex . ("0" <>)
