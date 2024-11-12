@@ -8,6 +8,8 @@
 
 module AbsPCRE where
 
+import Data.Hashable
+
 -- imports of auto generated code
 import AbsBinProp
 import AbsScriptName
@@ -361,7 +363,13 @@ data GroupId
   = ByNumber Int  -- \n, \gn, \g{n}
   | Relative Int  -- \g+n, \g-n, \g{+n}, \g{-n}
   | ByName String
-  deriving Show
+  deriving (Eq, Show)
+
+-- In case we want to lookup in application code
+instance Hashable GroupId where
+  hashWithSalt salt (ByNumber n) = hashWithSalt salt n
+  hashWithSalt salt (Relative n) = hashWithSalt salt n
+  hashWithSalt salt (ByName   s) = hashWithSalt salt s
 
 data SubroutineCall
   = Recurse     --     (?R)        recurse whole pattern
@@ -378,8 +386,14 @@ data SubroutineCall
   --                   (?P>name)    (Python)
   --                   \g<name>     (Oniguruma)
   --                   \g'name'     (Oniguruma)
-  deriving Show
+  deriving (Eq, Show)
 
+-- In case we want to lookup in application code
+instance Hashable SubroutineCall where
+  hashWithSalt salt Recurse      = hashWithSalt salt ()
+  hashWithSalt salt (CallAbs  n) = hashWithSalt salt n
+  hashWithSalt salt (CallRel  n) = hashWithSalt salt n
+  hashWithSalt salt (CallName s) = hashWithSalt salt s
 
 --                           Conditionals
 

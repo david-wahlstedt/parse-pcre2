@@ -21,9 +21,10 @@ description:         Please see the README on GitHub at <https://github.com/davi
 
 dependencies:
 - base >= 4.7 && < 5
-- unordered-containers
+- hashable
 - mtl
 - pretty-show
+- unordered-containers
 
 ghc-options:
 - -Wall
@@ -31,11 +32,9 @@ ghc-options:
 - -Widentities
 - -Wincomplete-record-updates
 - -Wincomplete-uni-patterns
-- -Wmissing-export-lists
 - -Wmissing-home-modules
 - -Wpartial-fields
 - -Wredundant-constraints
-- -XLambdaCase
 
 library:
   source-dirs:
