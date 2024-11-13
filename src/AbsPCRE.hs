@@ -363,7 +363,7 @@ data GroupId
   = ByNumber Int  -- \n, \gn, \g{n}
   | Relative Int  -- \g+n, \g-n, \g{+n}, \g{-n}
   | ByName String
-  deriving (Eq, Show)
+  deriving (Eq, Ord, Show)
 
 -- In case we want to lookup in application code
 instance Hashable GroupId where
@@ -386,7 +386,7 @@ data SubroutineCall
   --                   (?P>name)    (Python)
   --                   \g<name>     (Oniguruma)
   --                   \g'name'     (Oniguruma)
-  deriving (Eq, Show)
+  deriving (Eq, Ord, Show)
 
 -- In case we want to lookup in application code
 instance Hashable SubroutineCall where
